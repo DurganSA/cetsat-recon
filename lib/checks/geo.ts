@@ -349,15 +349,39 @@ export async function checkGEO(domain: string): Promise<CheckResult> {
       faqSchema.challengeDetected;
 
     if (challengeDetected) {
+      // Build summary of what we could check (static files often bypass bot protection)
+      const partialResults: string[] = [];
+      if (llmsTxt.exists) {
+        partialResults.push("llms.txt found");
+      } else {
+        partialResults.push("llms.txt not found");
+      }
+      if (markdownVersions.availablePages.length > 0) {
+        partialResults.push(`${markdownVersions.availablePages.length} markdown page(s)`);
+      }
+
+      const summary = partialResults.length > 0
+        ? `Bot protection detected (partial results: ${partialResults.join(", ")}). Full GEO analysis not possible.`
+        : "Bot protection detected - could not analyze site (search engines typically allowed).";
+
       return {
         id: "geo",
         label: "AI Discoverability / GEO",
         status: "info",
         data: {
           error: "Bot protection detected",
-          message: "Site is protected by Cloudflare or similar bot protection. Scanner was served a challenge page instead of real content. This prevents accurate GEO analysis. Note: Search engines (Google, Bing) are typically allowed through, so SEO may not be affected."
+          message: "Site is protected by Cloudflare or similar bot protection. Scanner was served a challenge page instead of real content. This prevents full GEO analysis. Note: Search engines (Google, Bing) are typically allowed through, so SEO may not be affected.",
+          // Include partial results from static files that may have bypassed protection
+          llmsTxt: {
+            exists: llmsTxt.exists,
+            hasLinkTag: false // Can't check HTML
+          },
+          markdownVersions: {
+            availablePages: markdownVersions.availablePages
+          },
+          challengeDetected: true
         },
-        summary: "Bot protection detected - could not analyze site (search engines typically allowed)."
+        summary
       };
     }
 
