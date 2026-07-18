@@ -1,0 +1,130 @@
+import { CheckResult, ScanInput } from "../types";
+import { checkDNS } from "./dns";
+import { checkEmail } from "./email";
+import { checkHeaders } from "./headers";
+import { checkTLS } from "./tls";
+import { checkSubdomains } from "./subdomains";
+import { checkExposure } from "./exposure";
+import { checkPageSpeed } from "./pagespeed";
+import { checkWhois } from "./whois";
+import { checkCompaniesHouse } from "./companies-house";
+import { checkLookalike } from "./lookalike";
+import { checkFingerprint } from "./fingerprint";
+import { checkEmailExtras } from "./email-extras";
+import { checkBlocklist } from "./blocklist";
+import { checkWebHygiene } from "./web-hygiene";
+import { checkSafeBrowsing } from "./safebrowsing";
+
+export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
+
+export const CHECKS: Array<{
+  id: string;
+  label: string;
+  fn: CheckFunction;
+  priority: number;
+}> = [
+  {
+    id: "lookalike",
+    label: "Lookalike domains",
+    fn: async (input) => checkLookalike(input.domain),
+    priority: 1
+  },
+  {
+    id: "email",
+    label: "Email security",
+    fn: async (input) => checkEmail(input.domain),
+    priority: 2
+  },
+  {
+    id: "headers",
+    label: "Security headers",
+    fn: async (input) => checkHeaders(input.domain),
+    priority: 3
+  },
+  {
+    id: "tls",
+    label: "TLS certificate",
+    fn: async (input) => checkTLS(input.domain),
+    priority: 4
+  },
+  {
+    id: "exposure",
+    label: "Internet exposure",
+    fn: async (input) => checkExposure(input.domain),
+    priority: 5
+  },
+  {
+    id: "subdomains",
+    label: "Subdomains",
+    fn: async (input) => checkSubdomains(input.domain),
+    priority: 6
+  },
+  {
+    id: "fingerprint",
+    label: "Technology fingerprint",
+    fn: async (input) => checkFingerprint(input.domain),
+    priority: 7
+  },
+  {
+    id: "email_extras",
+    label: "Email extras",
+    fn: async (input) => checkEmailExtras(input.domain),
+    priority: 8
+  },
+  {
+    id: "blocklist",
+    label: "Email blocklists",
+    fn: async (input) => checkBlocklist(input.domain),
+    priority: 9
+  },
+  {
+    id: "web_hygiene",
+    label: "Web hygiene",
+    fn: async (input) => checkWebHygiene(input.domain),
+    priority: 10
+  },
+  {
+    id: "safebrowsing",
+    label: "Safe Browsing",
+    fn: async (input) => checkSafeBrowsing(input.domain),
+    priority: 11
+  },
+  {
+    id: "pagespeed",
+    label: "Page speed",
+    fn: async (input) => checkPageSpeed(input.domain),
+    priority: 12
+  },
+  {
+    id: "dns",
+    label: "DNS",
+    fn: async (input) => checkDNS(input.domain),
+    priority: 13
+  },
+  {
+    id: "whois",
+    label: "Domain registration",
+    fn: async (input) => checkWhois(input.domain),
+    priority: 14
+  },
+  {
+    id: "companies_house",
+    label: "Companies House",
+    fn: async (input) => checkCompaniesHouse(input.domain, input.companyName, input.companiesHouseNumber),
+    priority: 15
+  }
+];
+
+export async function runCheck(check: typeof CHECKS[0], input: ScanInput): Promise<CheckResult> {
+  try {
+    return await check.fn(input);
+  } catch (error) {
+    return {
+      id: check.id,
+      label: check.label,
+      status: "info",
+      data: { error: error instanceof Error ? error.message : String(error) },
+      summary: `Check failed: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}

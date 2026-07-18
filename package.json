@@ -9,7 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "dns-over-http-resolver": "^3.0.16",
+    "docx": "^9.7.1",
     "next": "16.2.10",
+    "punycode": "^2.3.1",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
