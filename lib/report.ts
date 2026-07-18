@@ -67,7 +67,7 @@ export async function generateReport(
 
   sections.push(
     new Paragraph({
-      text: "1. Your business, as we see it",
+      text: "1. Company Profile & Digital Footprint",
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
@@ -82,9 +82,13 @@ export async function generateReport(
     new Paragraph({ text: "" })
   );
 
+  // Companies House data
   const companyInfo = results.find(r => r.id === "companies_house");
   if (companyInfo && companyInfo.data.companyName) {
     sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Company Information", bold: true })]
+      }),
       new Paragraph({
         text: `Company: ${companyInfo.data.companyName}`
       }),
@@ -93,24 +97,193 @@ export async function generateReport(
       }),
       new Paragraph({
         text: `Incorporated: ${companyInfo.data.dateOfCreation}`
-      }),
-      new Paragraph({ text: "" })
+      })
     );
+
+    if (companyInfo.data.companyNumber) {
+      sections.push(
+        new Paragraph({
+          text: `Companies House Number: ${companyInfo.data.companyNumber}`
+        })
+      );
+    }
+
+    if (companyInfo.data.sicCodes && companyInfo.data.sicCodes.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Industry: ${companyInfo.data.sicCodes.join(", ")}`
+        })
+      );
+    }
+
+    if (companyInfo.data.directors && companyInfo.data.directors.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Directors: ${companyInfo.data.directors.join(", ")}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
   }
 
-  const emailInfo = results.find(r => r.id === "email");
-  if (emailInfo && emailInfo.data.provider) {
+  // Domain age
+  const whoisInfo = results.find(r => r.id === "whois");
+  if (whoisInfo && whoisInfo.data.domainAge) {
     sections.push(
       new Paragraph({
-        text: `Email provider: ${emailInfo.data.provider}`
+        children: [new TextRun({ text: "Domain Information", bold: true })]
       }),
-      new Paragraph({ text: "" })
+      new Paragraph({
+        text: `Domain age: ${whoisInfo.data.domainAge}`
+      })
     );
+    if (whoisInfo.data.registrar) {
+      sections.push(
+        new Paragraph({
+          text: `Registrar: ${whoisInfo.data.registrar}`
+        })
+      );
+    }
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  // Technology stack
+  const fingerprintInfo = results.find(r => r.id === "fingerprint");
+  if (fingerprintInfo && fingerprintInfo.data.detected) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Technology Stack", bold: true })]
+      })
+    );
+    
+    if (fingerprintInfo.data.cms) {
+      sections.push(
+        new Paragraph({
+          text: `CMS: ${fingerprintInfo.data.cms}`
+        })
+      );
+    }
+    
+    if (fingerprintInfo.data.server) {
+      sections.push(
+        new Paragraph({
+          text: `Web server: ${fingerprintInfo.data.server}`
+        })
+      );
+    }
+
+    if (fingerprintInfo.data.frameworks && fingerprintInfo.data.frameworks.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Frameworks: ${fingerprintInfo.data.frameworks.join(", ")}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  // Email infrastructure
+  const emailInfo = results.find(r => r.id === "email");
+  if (emailInfo) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Email Infrastructure", bold: true })]
+      })
+    );
+    
+    if (emailInfo.data.provider) {
+      sections.push(
+        new Paragraph({
+          text: `Email provider: ${emailInfo.data.provider}`
+        })
+      );
+    }
+
+    if (emailInfo.data.mxRecords && emailInfo.data.mxRecords.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Mail servers: ${emailInfo.data.mxRecords.slice(0, 3).join(", ")}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  // DNS/Hosting
+  const dnsInfo = results.find(r => r.id === "dns");
+  if (dnsInfo && dnsInfo.data.aRecords && dnsInfo.data.aRecords.length > 0) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Hosting Infrastructure", bold: true })]
+      }),
+      new Paragraph({
+        text: `IP addresses: ${dnsInfo.data.aRecords.slice(0, 3).join(", ")}`
+      })
+    );
+
+    if (dnsInfo.data.nsRecords && dnsInfo.data.nsRecords.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `DNS provider: ${dnsInfo.data.nsRecords.slice(0, 2).join(", ")}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  // Digital footprint
+  const subdomainInfo = results.find(r => r.id === "subdomains");
+  if (subdomainInfo && subdomainInfo.data.count) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Digital Footprint", bold: true })]
+      }),
+      new Paragraph({
+        text: `Discovered subdomains: ${subdomainInfo.data.count}`
+      })
+    );
+
+    if (subdomainInfo.data.sensitive && subdomainInfo.data.sensitive.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Sensitive subdomains: ${subdomainInfo.data.sensitive.join(", ")}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  // Internet exposure
+  const exposureInfo = results.find(r => r.id === "exposure");
+  if (exposureInfo && exposureInfo.data.ports && exposureInfo.data.ports.length > 0) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Internet Exposure", bold: true })]
+      }),
+      new Paragraph({
+        text: `Open ports detected: ${exposureInfo.data.ports.join(", ")}`
+      })
+    );
+
+    if (exposureInfo.data.vulns && exposureInfo.data.vulns.length > 0) {
+      sections.push(
+        new Paragraph({
+          text: `Known CVEs: ${exposureInfo.data.vulns.length}`
+        })
+      );
+    }
+
+    sections.push(new Paragraph({ text: "" }));
   }
 
   sections.push(
     new Paragraph({
-      text: "2. What the outside world can see",
+      text: "2. Security Findings",
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" })
@@ -166,16 +339,16 @@ export async function generateReport(
 
   sections.push(
     new Paragraph({
-      text: "3. What good looks like",
+      text: "3. Risk Assessment",
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
     new Paragraph({
-      text: "For a business of your size and sector, good security hygiene means: DMARC at enforcement (p=reject), security headers in place, no known vulnerabilities exposed to the internet, and systems kept current. These are the baseline measures that keep you out of the low-hanging fruit category."
+      text: "Good security hygiene for a business of your size and sector means: DMARC at enforcement (p=reject), security headers in place, no known vulnerabilities exposed to the internet, and systems kept current. These are baseline measures that provide protection against the most common attacks."
     }),
     new Paragraph({ text: "" }),
     new Paragraph({
-      children: [new TextRun({ text: "Two numbers worth knowing:", bold: true })]
+      children: [new TextRun({ text: "Industry context:", bold: true })]
     }),
     new Paragraph({
       text: "• The average cost of a data breach for UK SMEs is £4,200 (UK Government Cyber Security Breaches Survey 2023)."
@@ -183,37 +356,15 @@ export async function generateReport(
     new Paragraph({
       text: "• Many public sector and enterprise tenders now require Cyber Essentials certification as a minimum."
     }),
+    new Paragraph({
+      text: "• 32% of businesses reported cyber security breaches or attacks in the past 12 months."
+    }),
     new Paragraph({ text: "" })
   );
 
-  if (capabilities.size > 0) {
-    sections.push(
-      new Paragraph({
-        text: "4. Where we could help",
-        heading: HeadingLevel.HEADING_2
-      }),
-      new Paragraph({ text: "" })
-    );
-
-    Array.from(capabilities).forEach(capKey => {
-      const cap = CAPABILITIES[capKey];
-      if (cap) {
-        sections.push(
-          new Paragraph({
-            children: [new TextRun({ text: cap.name, bold: true })]
-          }),
-          new Paragraph({
-            text: cap.pitch
-          }),
-          new Paragraph({ text: "" })
-        );
-      }
-    });
-  }
-
   sections.push(
     new Paragraph({
-      text: "5. Where this leaves you",
+      text: "4. Executive Summary",
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
@@ -237,26 +388,58 @@ export async function generateReport(
 
   sections.push(
     new Paragraph({
-      text: "6. About Cetsat, and the next step",
+      text: "5. Recommended Actions",
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
     new Paragraph({
-      text: "Cetsat provides managed security and IT services to UK businesses. We focus on practical, proportionate measures that fit your risk profile and budget."
+      text: "Based on the findings in this report, we recommend prioritizing the following actions:"
+    }),
+    new Paragraph({ text: "" })
+  );
+
+  // Add top 3 priority actions
+  const priorityFindings = [...actionResults.slice(0, 3)];
+  if (priorityFindings.length > 0) {
+    sections.push(
+      new Paragraph({
+        children: [new TextRun({ text: "Priority Actions:", bold: true })]
+      })
+    );
+
+    priorityFindings.forEach((finding, index) => {
+      sections.push(
+        new Paragraph({
+          text: `${index + 1}. ${finding.label}: ${getQuickFix(finding)}`
+        })
+      );
+    });
+
+    sections.push(new Paragraph({ text: "" }));
+  }
+
+  sections.push(
+    new Paragraph({
+      children: [new TextRun({ text: "Next Steps:", bold: true })]
+    }),
+    new Paragraph({
+      text: "• Review the detailed findings in section 2 and their remediation steps"
+    }),
+    new Paragraph({
+      text: "• Assign ownership of each action item to appropriate team members"
+    }),
+    new Paragraph({
+      text: "• Consider engaging a security professional for items requiring specialized expertise"
+    }),
+    new Paragraph({
+      text: "• Re-scan after implementing fixes to verify improvements"
     }),
     new Paragraph({ text: "" }),
     new Paragraph({
-      children: [new TextRun({ text: "Next step:", bold: true })]
+      children: [new TextRun({ text: "About This Report:", bold: true })]
     }),
     new Paragraph({
-      text: "A 30-minute call to walk through these findings and answer your questions. No obligation, no sales pitch until you ask for one."
-    }),
-    new Paragraph({ text: "" }),
-    new Paragraph({
-      children: [new TextRun({ text: "If you do one thing:", bold: true })]
-    }),
-    new Paragraph({
-      text: "Fix your DMARC record. It's free, it takes 10 minutes, and it stops criminals impersonating you in email to your customers."
+      text: "This assessment is based on publicly available information only. A comprehensive security audit would require internal access to systems, configurations, and policies. The findings in this report represent external visibility and may not reflect your complete security posture."
     })
   );
 
@@ -270,6 +453,39 @@ export async function generateReport(
   });
 
   return await Packer.toBuffer(doc);
+}
+
+function getQuickFix(finding: CheckResult): string {
+  switch (finding.id) {
+    case "email":
+      return "Add DMARC record with p=reject policy to DNS";
+    case "headers":
+      return "Configure security headers on web server";
+    case "tls":
+      return "Update TLS configuration to support TLS 1.3 and strong cipher suites";
+    case "lookalike":
+      return "Register common typosquatting variants and monitor for phishing";
+    case "exposure":
+      return "Patch vulnerable services and close unnecessary ports";
+    case "fingerprint":
+      return "Update CMS and plugins to latest versions";
+    case "email-extras":
+      return "Implement MTA-STS and TLS-RPT policies";
+    case "blocklist":
+      return "Request delisting and investigate source of spam complaints";
+    case "web-hygiene":
+      return "Enforce HTTPS redirects and implement cookie consent";
+    case "safebrowsing":
+      return "Contact Google to review and remove malware/phishing flags";
+    case "subdomains":
+      return "Secure or decommission sensitive subdomains (dev/staging/admin)";
+    case "dns":
+      return "Enable DNSSEC for domain authentication";
+    case "pagespeed":
+      return "Optimize images, leverage browser caching, and minify resources";
+    default:
+      return "Review finding and implement recommended fixes";
+  }
 }
 
 function getWhyItMatters(finding: CheckResult): string {
