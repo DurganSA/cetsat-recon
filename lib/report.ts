@@ -1,5 +1,5 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType } from "docx";
-import { CheckResult } from "./types";
+import { CheckResult, ComparisonResult } from "./types";
 import { CAPABILITIES } from "./capabilities";
 
 export async function generateReport(
@@ -9,7 +9,9 @@ export async function generateReport(
     companyName?: string;
     recipientName?: string;
     preparedBy?: string;
-  }
+  },
+  competitors: { domain: string; results: CheckResult[] }[] = [],
+  comparison: ComparisonResult | null = null
 ): Promise<Buffer> {
   const actionResults = results.filter(r => r.status === "action");
   const reviewResults = results.filter(r => r.status === "review");
@@ -20,7 +22,7 @@ export async function generateReport(
     if (f.capability) capabilities.add(f.capability);
   });
 
-  const sections: Paragraph[] = [];
+  const sections: (Paragraph | Table)[] = [];
 
   sections.push(
     new Paragraph({
@@ -282,9 +284,11 @@ export async function generateReport(
     sections.push(new Paragraph({ text: "" }));
   }
 
+  let sectionNum = 2;
+
   sections.push(
     new Paragraph({
-      text: "2. Security Findings",
+      text: `${sectionNum++}. Security Findings`,
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" })
@@ -329,7 +333,7 @@ export async function generateReport(
 
   sections.push(
     new Paragraph({
-      text: "3. Risk Assessment",
+      text: `${sectionNum++}. Risk Assessment`,
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
@@ -339,9 +343,38 @@ export async function generateReport(
     new Paragraph({ text: "" })
   );
 
+  // How You Compare (only when competitor data was collected)
+  if (comparison && comparison.entries.length > 0) {
+    sections.push(
+      new Paragraph({
+        text: `${sectionNum++}. How You Compare`,
+        heading: HeadingLevel.HEADING_2
+      }),
+      new Paragraph({ text: "" }),
+      new Paragraph({
+        text: `This section benchmarks ${input.domain} against ${comparison.domains.filter(d => d.role !== "primary").map(d => d.domain).join(" and ")} using the same automated checks, limited to the checks that could be run fairly across all sites.`
+      }),
+      new Paragraph({ text: "" })
+    );
+
+    if (comparison.headlines.length > 0) {
+      sections.push(
+        new Paragraph({
+          children: [new TextRun({ text: "Key differences:", bold: true })]
+        })
+      );
+      comparison.headlines.forEach(headline => {
+        sections.push(new Paragraph({ text: `• ${headline}` }));
+      });
+      sections.push(new Paragraph({ text: "" }));
+    }
+
+    sections.push(buildComparisonTable(comparison), new Paragraph({ text: "" }));
+  }
+
   sections.push(
     new Paragraph({
-      text: "4. Executive Summary",
+      text: `${sectionNum++}. Executive Summary`,
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
@@ -365,7 +398,7 @@ export async function generateReport(
 
   sections.push(
     new Paragraph({
-      text: "5. Recommended Actions",
+      text: `${sectionNum++}. Recommended Actions`,
       heading: HeadingLevel.HEADING_2
     }),
     new Paragraph({ text: "" }),
@@ -503,4 +536,51 @@ function getTrafficLightSummary(results: CheckResult[]): { action: number; revie
     review: results.filter(r => r.status === "review").length,
     good: results.filter(r => r.status === "good").length
   };
+}
+
+const STATUS_ICON: Record<string, string> = {
+  good: "Good",
+  review: "Review",
+  action: "Action",
+  info: "Info"
+};
+
+function buildComparisonTable(comparison: ComparisonResult): Table {
+  const headerRow = new TableRow({
+    children: [
+      new TableCell({
+        children: [new Paragraph({ children: [new TextRun({ text: "Check", bold: true })] })],
+        width: { size: 25, type: WidthType.PERCENTAGE }
+      }),
+      ...comparison.domains.map(d =>
+        new TableCell({
+          children: [new Paragraph({ children: [new TextRun({ text: d.domain, bold: true })] })],
+          width: { size: Math.floor(75 / comparison.domains.length), type: WidthType.PERCENTAGE }
+        })
+      )
+    ]
+  });
+
+  const rows = comparison.entries.map(entry => {
+    return new TableRow({
+      children: [
+        new TableCell({ children: [new Paragraph({ text: entry.label })] }),
+        ...entry.domains.map(d => {
+          const text = `${STATUS_ICON[d.status] ?? d.status}${d.metric ? ` - ${d.metric}` : ""}`;
+          return new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text, bold: entry.winner === d.role })]
+              })
+            ]
+          });
+        })
+      ]
+    });
+  });
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [headerRow, ...rows]
+  });
 }

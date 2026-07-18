@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { generateReport } from "@/lib/report";
-import { CheckResult } from "@/lib/types";
+import { CheckResult, ComparisonResult } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -8,7 +8,7 @@ export const maxDuration = 60;
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { results, input } = body;
+    const { results, input, competitors, comparison } = body;
 
     if (!results || !Array.isArray(results) || !input || !input.domain) {
       return new Response(
@@ -17,7 +17,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const reportBuffer = await generateReport(results as CheckResult[], input);
+    const reportBuffer = await generateReport(
+      results as CheckResult[],
+      input,
+      Array.isArray(competitors) ? competitors : [],
+      (comparison as ComparisonResult) ?? null
+    );
 
     const filename = `security-review-${input.domain}-${new Date().toISOString().split("T")[0]}.docx`;
 

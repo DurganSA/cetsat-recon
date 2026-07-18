@@ -23,102 +23,122 @@ export const CHECKS: Array<{
   label: string;
   fn: CheckFunction;
   priority: number;
+  // Whether this check should also run against competitor domains.
+  // Excludes checks that are slow (SSL Labs), quota-limited (Shodan), or
+  // only meaningful for the primary domain (lookalike, Companies House).
+  competitorEligible?: boolean;
 }> = [
   {
     id: "lookalike",
     label: "Lookalike domains",
     fn: async (input) => checkLookalike(input.domain),
-    priority: 1
+    priority: 1,
+    competitorEligible: false
   },
   {
     id: "email",
     label: "Email security",
     fn: async (input) => checkEmail(input.domain),
-    priority: 2
+    priority: 2,
+    competitorEligible: true
   },
   {
     id: "headers",
     label: "Security headers",
     fn: async (input) => checkHeaders(input.domain),
-    priority: 3
+    priority: 3,
+    competitorEligible: true
   },
   {
     id: "tls",
     label: "TLS certificate",
     fn: async (input) => checkTLS(input.domain),
-    priority: 4
+    priority: 4,
+    competitorEligible: false
   },
   {
     id: "exposure",
     label: "Internet exposure",
     fn: async (input) => checkExposure(input.domain),
-    priority: 5
+    priority: 5,
+    competitorEligible: false
   },
   {
     id: "subdomains",
     label: "Subdomains",
     fn: async (input) => checkSubdomains(input.domain),
-    priority: 6
+    priority: 6,
+    competitorEligible: true
   },
   {
     id: "fingerprint",
     label: "Technology fingerprint",
     fn: async (input) => checkFingerprint(input.domain),
-    priority: 7
+    priority: 7,
+    competitorEligible: true
   },
   {
     id: "email_extras",
     label: "Email extras",
     fn: async (input) => checkEmailExtras(input.domain),
-    priority: 8
+    priority: 8,
+    competitorEligible: true
   },
   {
     id: "blocklist",
     label: "Email blocklists",
     fn: async (input) => checkBlocklist(input.domain),
-    priority: 9
+    priority: 9,
+    competitorEligible: true
   },
   {
     id: "web_hygiene",
     label: "Web hygiene",
     fn: async (input) => checkWebHygiene(input.domain),
-    priority: 10
+    priority: 10,
+    competitorEligible: true
   },
   {
     id: "safebrowsing",
     label: "Safe Browsing",
     fn: async (input) => checkSafeBrowsing(input.domain),
-    priority: 11
+    priority: 11,
+    competitorEligible: true
   },
   {
     id: "geo",
     label: "AI Discoverability / GEO",
     fn: async (input) => checkGEO(input.domain),
-    priority: 12
+    priority: 12,
+    competitorEligible: true
   },
   {
     id: "pagespeed",
     label: "Page speed",
     fn: async (input) => checkPageSpeed(input.domain),
-    priority: 13
+    priority: 13,
+    competitorEligible: true
   },
   {
     id: "dns",
     label: "DNS",
     fn: async (input) => checkDNS(input.domain),
-    priority: 14
+    priority: 14,
+    competitorEligible: true
   },
   {
     id: "whois",
     label: "Domain registration",
     fn: async (input) => checkWhois(input.domain),
-    priority: 15
+    priority: 15,
+    competitorEligible: true
   },
   {
     id: "companies_house",
     label: "Companies House",
     fn: async (input) => checkCompaniesHouse(input.domain, input.companyName, input.companiesHouseNumber),
-    priority: 16
+    priority: 16,
+    competitorEligible: false
   }
 ];
 

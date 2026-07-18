@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { CheckResult } from "@/lib/types";
+import { CheckResult, ComparisonResult, DomainRole, StreamedCheckResult } from "@/lib/types";
+
+type StreamLine = StreamedCheckResult | { type: "comparison"; comparison: ComparisonResult };
 
 export default function Home() {
   const [domain, setDomain] = useState("");
@@ -9,15 +11,23 @@ export default function Home() {
   const [companiesHouseNumber, setCompaniesHouseNumber] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
-  
+  const [competitor1, setCompetitor1] = useState("");
+  const [competitor2, setCompetitor2] = useState("");
+
   const [isScanning, setIsScanning] = useState(false);
   const [results, setResults] = useState<CheckResult[]>([]);
+  const [competitor1Results, setCompetitor1Results] = useState<CheckResult[]>([]);
+  const [competitor2Results, setCompetitor2Results] = useState<CheckResult[]>([]);
+  const [comparison, setComparison] = useState<ComparisonResult | null>(null);
   const [error, setError] = useState("");
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsScanning(true);
     setResults([]);
+    setCompetitor1Results([]);
+    setCompetitor2Results([]);
+    setComparison(null);
     setError("");
 
     try {
@@ -29,7 +39,9 @@ export default function Home() {
           companyName,
           companiesHouseNumber,
           recipientName,
-          preparedBy
+          preparedBy,
+          competitor1,
+          competitor2
         })
       });
 
@@ -59,8 +71,21 @@ export default function Home() {
         for (const line of lines) {
           if (line.trim()) {
             try {
-              const result = JSON.parse(line) as CheckResult;
-              setResults(prev => [...prev, result]);
+              const parsed = JSON.parse(line) as StreamLine;
+
+              if ("type" in parsed && parsed.type === "comparison") {
+                setComparison(parsed.comparison);
+                continue;
+              }
+
+              const result = parsed as StreamedCheckResult;
+              if (result.role === "competitor1") {
+                setCompetitor1Results(prev => [...prev, result]);
+              } else if (result.role === "competitor2") {
+                setCompetitor2Results(prev => [...prev, result]);
+              } else {
+                setResults(prev => [...prev, result]);
+              }
             } catch (e) {
               console.error("Failed to parse line:", line, e);
             }
@@ -86,7 +111,12 @@ export default function Home() {
             companyName,
             recipientName,
             preparedBy
-          }
+          },
+          competitors: [
+            competitor1 ? { domain: competitor1, results: competitor1Results } : null,
+            competitor2 ? { domain: competitor2, results: competitor2Results } : null
+          ].filter(Boolean),
+          comparison
         })
       });
 
@@ -114,6 +144,11 @@ export default function Home() {
       new Set(results.filter(r => r.capability).map(r => r.capability))
     );
 
+    const competitors = [
+      competitor1 ? { domain: competitor1, results: competitor1Results } : null,
+      competitor2 ? { domain: competitor2, results: competitor2Results } : null
+    ].filter(Boolean);
+
     const exportData = {
       scan_date: new Date().toISOString(),
       domain,
@@ -128,7 +163,9 @@ export default function Home() {
         good: results.filter(r => r.status === "good").length,
         info: results.filter(r => r.status === "info").length
       },
-      capabilities
+      capabilities,
+      competitors,
+      comparison
     };
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
@@ -250,6 +287,46 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="border-t border-gray-200 pt-4">
+              <p className="text-sm font-medium text-gray-700 mb-1">
+                Competitor benchmarking (optional)
+              </p>
+              <p className="text-xs text-gray-500 mb-3">
+                Run the same checks against up to 2 competitor domains for a side-by-side comparison. Uses a faster check subset (skips TLS/Shodan) to keep scan time down.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="competitor1" className="block text-sm font-medium text-gray-700 mb-1">
+                    Competitor 1 domain
+                  </label>
+                  <input
+                    type="text"
+                    id="competitor1"
+                    value={competitor1}
+                    onChange={(e) => setCompetitor1(e.target.value)}
+                    placeholder="competitor1.com"
+                    disabled={isScanning}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="competitor2" className="block text-sm font-medium text-gray-700 mb-1">
+                    Competitor 2 domain
+                  </label>
+                  <input
+                    type="text"
+                    id="competitor2"
+                    value={competitor2}
+                    onChange={(e) => setCompetitor2(e.target.value)}
+                    placeholder="competitor2.com"
+                    disabled={isScanning}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+
             <button
               type="submit"
               disabled={isScanning || !domain}
@@ -316,6 +393,98 @@ export default function Home() {
                 ))}
               </div>
             </div>
+
+            {competitor1Results.length > 0 && (
+              <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">
+                  Competitor: {competitor1} ({competitor1Results.length})
+                </h2>
+                <div className="space-y-3">
+                  {competitor1Results.map((result) => (
+                    <div
+                      key={result.id}
+                      className={`border-2 rounded-lg p-3 ${statusColors[result.status]}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="text-xl">{statusIcons[result.status]}</span>
+                        <div className="flex-1">
+                          <h4 className="font-semibold">{result.label}</h4>
+                          <p className="text-sm">{result.summary}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {competitor2Results.length > 0 && (
+              <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">
+                  Competitor: {competitor2} ({competitor2Results.length})
+                </h2>
+                <div className="space-y-3">
+                  {competitor2Results.map((result) => (
+                    <div
+                      key={result.id}
+                      className={`border-2 rounded-lg p-3 ${statusColors[result.status]}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="text-xl">{statusIcons[result.status]}</span>
+                        <div className="flex-1">
+                          <h4 className="font-semibold">{result.label}</h4>
+                          <p className="text-sm">{result.summary}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {comparison && comparison.entries.length > 0 && (
+              <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">How You Compare</h2>
+
+                {comparison.headlines.length > 0 && (
+                  <div className="mb-6 space-y-2">
+                    {comparison.headlines.map((headline, i) => (
+                      <p key={i} className="text-sm bg-gray-50 border border-gray-200 rounded p-2">
+                        {headline}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200 text-left">
+                        <th className="py-2 pr-4">Check</th>
+                        {comparison.domains.map((d) => (
+                          <th key={d.role} className="py-2 pr-4">{d.domain}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {comparison.entries.map((entry) => (
+                        <tr key={entry.checkId} className="border-b border-gray-100">
+                          <td className="py-2 pr-4 font-medium">{entry.label}</td>
+                          {entry.domains.map((d) => (
+                            <td
+                              key={d.role}
+                              className={`py-2 pr-4 ${entry.winner === d.role ? "font-semibold" : ""}`}
+                            >
+                              {statusIcons[d.status]} {d.metric ?? d.status}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="bg-white shadow-md rounded-lg p-6">
               <h3 className="text-xl font-bold text-gray-900 mb-4">Summary</h3>

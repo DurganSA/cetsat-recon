@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { CHECKS, runCheck } from "@/lib/checks";
-import { ScanInput, CheckResult } from "@/lib/types";
+import { buildComparison } from "@/lib/comparison";
+import { ScanInput, CheckResult, DomainScan, DomainRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -8,7 +9,7 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { domain, companyName, companiesHouseNumber, recipientName, preparedBy } = body;
+    const { domain, companyName, companiesHouseNumber, recipientName, preparedBy, competitor1, competitor2 } = body;
 
     if (!domain) {
       return new Response(
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedDomain = normalizeDomain(domain);
-    
+
     if (!isValidDomain(normalizedDomain)) {
       return new Response(
         JSON.stringify({ error: "Invalid domain format" }),
@@ -34,28 +35,53 @@ export async function POST(request: NextRequest) {
       preparedBy
     };
 
+    // Competitor domains only get the fast, competitor-eligible check subset
+    // (skips SSL Labs, Shodan, lookalike, Companies House - see lib/checks/index.ts)
+    const competitorDomains: { role: DomainRole; domain: string }[] = [];
+    for (const [role, raw] of [["competitor1", competitor1], ["competitor2", competitor2]] as const) {
+      if (!raw) continue;
+      const normalized = normalizeDomain(raw);
+      if (isValidDomain(normalized)) {
+        competitorDomains.push({ role, domain: normalized });
+      }
+    }
+
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        const checkPromises = CHECKS.map(async (check) => {
-          try {
-            const result = await runCheck(check, input);
-            const line = JSON.stringify(result) + "\n";
-            controller.enqueue(encoder.encode(line));
-          } catch (error) {
-            const errorResult: CheckResult = {
-              id: check.id,
-              label: check.label,
-              status: "info",
-              data: { error: error instanceof Error ? error.message : String(error) },
-              summary: `Check failed: ${error instanceof Error ? error.message : String(error)}`
-            };
-            const line = JSON.stringify(errorResult) + "\n";
-            controller.enqueue(encoder.encode(line));
-          }
+        const primaryResults: CheckResult[] = [];
+        const primaryPromises = CHECKS.map(async (check) => {
+          const result = await runCheck(check, input);
+          primaryResults.push(result);
+          const line = JSON.stringify({ ...result, domain: normalizedDomain, role: "primary" as DomainRole }) + "\n";
+          controller.enqueue(encoder.encode(line));
         });
 
-        await Promise.all(checkPromises);
+        const competitorEligibleChecks = CHECKS.filter(c => c.competitorEligible);
+        const competitorScans: DomainScan[] = competitorDomains.map(c => ({ role: c.role, domain: c.domain, results: [] }));
+
+        const competitorPromises = competitorScans.flatMap((scan) => {
+          const compInput: ScanInput = { domain: scan.domain };
+          return competitorEligibleChecks.map(async (check) => {
+            const result = await runCheck(check, compInput);
+            scan.results.push(result);
+            const line = JSON.stringify({ ...result, domain: scan.domain, role: scan.role }) + "\n";
+            controller.enqueue(encoder.encode(line));
+          });
+        });
+
+        await Promise.all([...primaryPromises, ...competitorPromises]);
+
+        if (competitorScans.length > 0) {
+          const allScans: DomainScan[] = [
+            { role: "primary", domain: normalizedDomain, results: primaryResults },
+            ...competitorScans
+          ];
+          const comparison = buildComparison(allScans);
+          const comparisonLine = JSON.stringify({ type: "comparison", comparison }) + "\n";
+          controller.enqueue(encoder.encode(comparisonLine));
+        }
+
         controller.close();
       }
     });
