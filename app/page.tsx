@@ -108,6 +108,34 @@ export default function Home() {
     }
   };
 
+  const handleDownloadJSON = () => {
+    const exportData = {
+      scan_date: new Date().toISOString(),
+      domain,
+      company_name: companyName,
+      companies_house_number: companiesHouseNumber,
+      recipient_name: recipientName,
+      prepared_by: preparedBy,
+      results,
+      summary: {
+        action: results.filter(r => r.status === "action").length,
+        review: results.filter(r => r.status === "review").length,
+        good: results.filter(r => r.status === "good").length,
+        info: results.filter(r => r.status === "info").length
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${domain}-scan-data-${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  };
+
   const statusColors: Record<string, string> = {
     good: "bg-green-100 text-green-800 border-green-300",
     review: "bg-yellow-100 text-yellow-800 border-yellow-300",
@@ -240,12 +268,21 @@ export default function Home() {
                   Results ({results.length})
                 </h2>
                 {!isScanning && (
-                  <button
-                    onClick={handleDownloadReport}
-                    className="bg-green-600 text-white py-2 px-6 rounded-md font-medium hover:bg-green-700 transition-colors"
-                  >
-                    Download Report (.docx)
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleDownloadReport}
+                      className="bg-green-600 text-white py-2 px-6 rounded-md font-medium hover:bg-green-700 transition-colors"
+                    >
+                      📄 Download Report (.docx)
+                    </button>
+                    <button
+                      onClick={handleDownloadJSON}
+                      className="bg-blue-600 text-white py-2 px-6 rounded-md font-medium hover:bg-blue-700 transition-colors"
+                      title="Download technical data for AI report generation"
+                    >
+                      🤖 Download Data (JSON)
+                    </button>
+                  </div>
                 )}
               </div>
 
