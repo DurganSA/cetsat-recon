@@ -91,7 +91,8 @@ async function checkLlmsTxt(domain: string): Promise<{ exists: boolean; hasLinkT
     
     // Detect challenge page
     if (isCloudflareChallengePage(html, htmlResponse.headers)) {
-      return { exists: false, hasLinkTag: false, challengeDetected: true };
+      // Keep the llms.txt result we already got (static files often bypass bot protection)
+      return { exists: exists, hasLinkTag: false, challengeDetected: true };
     }
     
     const hasLinkTag = html.includes('rel="llms"') || html.includes("rel='llms'");
