@@ -46,11 +46,16 @@ export async function checkPageSpeed(domain: string): Promise<CheckResult> {
     const avgPerformance = Math.round((mobileData.performanceScore + desktopData.performanceScore) / 2);
     const avgSeo = Math.round((mobileData.seoScore + desktopData.seoScore) / 2);
 
+    // Security/alert status
     if (avgPerformance < 50 || avgSeo < 50) {
       status = "action";
-      capability = "software_team";
     } else if (avgPerformance < 70 || avgSeo < 70) {
       status = "review";
+    }
+
+    // Opportunity capability (decoupled from status)
+    // Attach software_team capability if there are optimization opportunities OR mobile perf < 90
+    if (opportunities.length > 0 || mobileData.performanceScore < 90) {
       capability = "software_team";
     }
 

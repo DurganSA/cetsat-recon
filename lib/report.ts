@@ -225,9 +225,10 @@ export async function generateReport(
     );
 
     if (dnsInfo.data.nsRecords && dnsInfo.data.nsRecords.length > 0) {
+      const providerName = extractDnsProviderName(dnsInfo.data.nsRecords);
       sections.push(
         new Paragraph({
-          text: `DNS provider: ${dnsInfo.data.nsRecords.slice(0, 2).join(", ")}`
+          text: `DNS provider: ${providerName}`
         })
       );
     }
@@ -306,9 +307,23 @@ export async function generateReport(
         new Paragraph({ text: "" }),
         new Paragraph({
           text: finding.summary
-        }),
-        new Paragraph({ text: "" })
+        })
       );
+
+      // Add specific details for certain findings
+      if (finding.id === "subdomains" && finding.data.sensitive && finding.data.sensitive.length > 0) {
+        sections.push(
+          new Paragraph({ text: "" }),
+          new Paragraph({
+            children: [new TextRun({ text: "Sensitive subdomains:", bold: true })]
+          }),
+          new Paragraph({
+            text: finding.data.sensitive.slice(0, 10).join(", ") + (finding.data.sensitive.length > 10 ? ", ..." : "")
+          })
+        );
+      }
+
+      sections.push(new Paragraph({ text: "" }));
     });
   }
 
@@ -415,6 +430,38 @@ export async function generateReport(
   });
 
   return await Packer.toBuffer(doc);
+}
+
+function extractDnsProviderName(nsRecords: string[]): string {
+  if (!nsRecords || nsRecords.length === 0) {
+    return "Unknown";
+  }
+
+  // Extract provider from nameserver pattern
+  const firstNs = nsRecords[0].toLowerCase().replace(/\.$/, "");
+  
+  // Common patterns
+  if (firstNs.includes("cloudflare")) return "Cloudflare";
+  if (firstNs.includes("ns.joker")) return "Joker.com";
+  if (firstNs.includes("awsdns")) return "Amazon Route 53";
+  if (firstNs.includes("googledomains.com") || firstNs.includes("google.com")) return "Google Domains";
+  if (firstNs.includes("azure-dns")) return "Azure DNS";
+  if (firstNs.includes("dnsmadeeasy")) return "DNS Made Easy";
+  if (firstNs.includes("dnsimple")) return "DNSimple";
+  if (firstNs.includes("nsone")) return "NS1";
+  if (firstNs.includes("ultradns")) return "UltraDNS";
+  if (firstNs.includes("godaddy")) return "GoDaddy";
+  if (firstNs.includes("namecheap")) return "Namecheap";
+  if (firstNs.includes("123-reg")) return "123-Reg";
+  
+  // If no known pattern, extract domain from NS record
+  const parts = firstNs.split(".");
+  if (parts.length >= 2) {
+    const domain = parts.slice(-2).join(".");
+    return domain.charAt(0).toUpperCase() + domain.slice(1);
+  }
+  
+  return nsRecords[0].replace(/\.$/, "");
 }
 
 function getQuickFix(finding: CheckResult): string {

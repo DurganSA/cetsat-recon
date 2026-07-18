@@ -109,6 +109,11 @@ export default function Home() {
   };
 
   const handleDownloadJSON = () => {
+    // Extract distinct capabilities across all checks
+    const capabilities = Array.from(
+      new Set(results.filter(r => r.capability).map(r => r.capability))
+    );
+
     const exportData = {
       scan_date: new Date().toISOString(),
       domain,
@@ -122,7 +127,8 @@ export default function Home() {
         review: results.filter(r => r.status === "review").length,
         good: results.filter(r => r.status === "good").length,
         info: results.filter(r => r.status === "info").length
-      }
+      },
+      capabilities
     };
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
