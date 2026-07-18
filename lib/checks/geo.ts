@@ -1,7 +1,34 @@
 import { CheckResult } from "../types";
 
-// Googlebot user-agent to bypass most bot protection (Cloudflare typically allows search engines)
-const SEARCH_ENGINE_USER_AGENT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+// Full browser fingerprint to bypass bot protection
+// Try multiple strategies in order of preference
+const USER_AGENTS = {
+  // Strategy 1: Real Chrome browser (most sites allow)
+  chrome: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  // Strategy 2: Googlebot (search engine)
+  googlebot: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  // Strategy 3: Bingbot (alternative search engine)
+  bingbot: "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)"
+};
+
+// Realistic browser headers to appear like a real Chrome browser
+function getBrowserHeaders(userAgent: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': userAgent,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1'
+  };
+  
+  return headers;
+}
 
 // Detect Cloudflare challenge page
 function isCloudflareChallengePage(html: string, headers: Headers): boolean {
@@ -16,20 +43,50 @@ function isCloudflareChallengePage(html: string, headers: Headers): boolean {
   );
 }
 
+// Try fetching with multiple user-agents until one works
+async function fetchWithFallback(url: string, options: RequestInit = {}): Promise<Response> {
+  const strategies = ['chrome', 'googlebot', 'bingbot'] as const;
+  
+  for (const strategy of strategies) {
+    try {
+      const headers = getBrowserHeaders(USER_AGENTS[strategy]);
+      const response = await fetch(url, {
+        ...options,
+        headers: { ...headers, ...(options.headers || {}) }
+      });
+      
+      // Check if we got a challenge page
+      const html = await response.text();
+      if (!isCloudflareChallengePage(html, response.headers)) {
+        // Success! Return a new response with the HTML
+        return new Response(html, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        });
+      }
+      // Challenge detected, try next strategy
+    } catch {
+      // Network error, try next strategy
+    }
+  }
+  
+  // All strategies failed, return last attempt with challenge detection
+  const headers = getBrowserHeaders(USER_AGENTS.chrome);
+  return fetch(url, {
+    ...options,
+    headers: { ...headers, ...(options.headers || {}) }
+  });
+}
+
 async function checkLlmsTxt(domain: string): Promise<{ exists: boolean; hasLinkTag: boolean; challengeDetected?: boolean }> {
   try {
     // Check if llms.txt exists
-    const llmsTxtResponse = await fetch(`https://${domain}/llms.txt`, { 
-      method: 'HEAD',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const llmsTxtResponse = await fetchWithFallback(`https://${domain}/llms.txt`, { method: 'HEAD' });
     const exists = llmsTxtResponse.ok;
 
-    // Check for llms link tag in HTML (using Googlebot user-agent)
-    const htmlResponse = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    // Check for llms link tag in HTML
+    const htmlResponse = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await htmlResponse.text();
     
     // Detect challenge page
@@ -79,10 +136,7 @@ async function checkMetaTags(domain: string): Promise<{
   challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const response = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await response.text();
     const headers = response.headers;
 
@@ -114,10 +168,7 @@ async function checkStructuredData(domain: string): Promise<{
   challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const response = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await response.text();
 
     // Detect challenge page
@@ -153,10 +204,7 @@ async function checkStructuredData(domain: string): Promise<{
 
 async function checkSSR(domain: string): Promise<{ hasContent: boolean; contentCount: number; challengeDetected?: boolean }> {
   try {
-    const response = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const response = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await response.text();
 
     // Detect challenge page
@@ -187,10 +235,7 @@ async function checkOpenGraph(domain: string): Promise<{
   challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const response = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await response.text();
 
     // Detect challenge page
@@ -238,10 +283,7 @@ async function checkMarkdownVersions(domain: string): Promise<{ availablePages: 
 
 async function checkFAQSchema(domain: string): Promise<{ hasFAQSchema: boolean; faqCount: number; challengeDetected?: boolean }> {
   try {
-    const response = await fetch(`https://${domain}/`, { 
-      redirect: 'follow',
-      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
-    });
+    const response = await fetchWithFallback(`https://${domain}/`, { redirect: 'follow' });
     const html = await response.text();
 
     // Detect challenge page
