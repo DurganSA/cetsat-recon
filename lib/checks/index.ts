@@ -14,6 +14,7 @@ import { checkEmailExtras } from "./email-extras";
 import { checkBlocklist } from "./blocklist";
 import { checkWebHygiene } from "./web-hygiene";
 import { checkSafeBrowsing } from "./safebrowsing";
+import { checkGEO } from "./geo";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -90,28 +91,34 @@ export const CHECKS: Array<{
     priority: 11
   },
   {
+    id: "geo",
+    label: "AI Discoverability / GEO",
+    fn: async (input) => checkGEO(input.domain),
+    priority: 12
+  },
+  {
     id: "pagespeed",
     label: "Page speed",
     fn: async (input) => checkPageSpeed(input.domain),
-    priority: 12
+    priority: 13
   },
   {
     id: "dns",
     label: "DNS",
     fn: async (input) => checkDNS(input.domain),
-    priority: 13
+    priority: 14
   },
   {
     id: "whois",
     label: "Domain registration",
     fn: async (input) => checkWhois(input.domain),
-    priority: 14
+    priority: 15
   },
   {
     id: "companies_house",
     label: "Companies House",
     fn: async (input) => checkCompaniesHouse(input.domain, input.companyName, input.companiesHouseNumber),
-    priority: 15
+    priority: 16
   }
 ];
 
