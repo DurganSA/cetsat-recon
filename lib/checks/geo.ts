@@ -1,14 +1,42 @@
 import { CheckResult } from "../types";
 
-async function checkLlmsTxt(domain: string): Promise<{ exists: boolean; hasLinkTag: boolean }> {
+// Googlebot user-agent to bypass most bot protection (Cloudflare typically allows search engines)
+const SEARCH_ENGINE_USER_AGENT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+
+// Detect Cloudflare challenge page
+function isCloudflareChallengePage(html: string, headers: Headers): boolean {
+  const csp = headers.get('content-security-policy') || '';
+  const htmlLower = html.toLowerCase();
+  
+  return (
+    csp.includes('challenges.cloudflare.com') ||
+    htmlLower.includes('just a moment') ||
+    htmlLower.includes('checking your browser') ||
+    htmlLower.includes('cloudflare ray id')
+  );
+}
+
+async function checkLlmsTxt(domain: string): Promise<{ exists: boolean; hasLinkTag: boolean; challengeDetected?: boolean }> {
   try {
     // Check if llms.txt exists
-    const llmsTxtResponse = await fetch(`https://${domain}/llms.txt`, { method: 'HEAD' });
+    const llmsTxtResponse = await fetch(`https://${domain}/llms.txt`, { 
+      method: 'HEAD',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const exists = llmsTxtResponse.ok;
 
-    // Check for llms link tag in HTML
-    const htmlResponse = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    // Check for llms link tag in HTML (using Googlebot user-agent)
+    const htmlResponse = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await htmlResponse.text();
+    
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, htmlResponse.headers)) {
+      return { exists: false, hasLinkTag: false, challengeDetected: true };
+    }
+    
     const hasLinkTag = html.includes('rel="llms"') || html.includes("rel='llms'");
 
     return { exists, hasLinkTag };
@@ -48,11 +76,26 @@ async function checkMetaTags(domain: string): Promise<{
   hasCanonical: boolean;
   hasNoindex: boolean;
   xRobotsNoindex: boolean;
+  challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    const response = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await response.text();
     const headers = response.headers;
+
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, headers)) {
+      return { 
+        hasDescription: false, 
+        hasCanonical: false, 
+        hasNoindex: false, 
+        xRobotsNoindex: false,
+        challengeDetected: true
+      };
+    }
 
     const hasDescription = html.includes('name="description"');
     const hasCanonical = html.includes('rel="canonical"');
@@ -68,10 +111,19 @@ async function checkMetaTags(domain: string): Promise<{
 async function checkStructuredData(domain: string): Promise<{
   hasJsonLd: boolean;
   schemaTypes: string[];
+  challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    const response = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await response.text();
+
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, response.headers)) {
+      return { hasJsonLd: false, schemaTypes: [], challengeDetected: true };
+    }
 
     const hasJsonLd = html.includes('application/ld+json');
     
@@ -99,10 +151,18 @@ async function checkStructuredData(domain: string): Promise<{
   }
 }
 
-async function checkSSR(domain: string): Promise<{ hasContent: boolean; contentCount: number }> {
+async function checkSSR(domain: string): Promise<{ hasContent: boolean; contentCount: number; challengeDetected?: boolean }> {
   try {
-    const response = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    const response = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await response.text();
+
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, response.headers)) {
+      return { hasContent: false, contentCount: 0, challengeDetected: true };
+    }
 
     // Count semantic HTML elements
     const h1Count = (html.match(/<h1[^>]*>/gi) || []).length;
@@ -124,10 +184,26 @@ async function checkOpenGraph(domain: string): Promise<{
   hasDescriptionTag: boolean;
   hasImageTag: boolean;
   hasUrlTag: boolean;
+  challengeDetected?: boolean;
 }> {
   try {
-    const response = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    const response = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await response.text();
+
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, response.headers)) {
+      return { 
+        hasOgTags: false, 
+        hasTitleTag: false, 
+        hasDescriptionTag: false, 
+        hasImageTag: false, 
+        hasUrlTag: false,
+        challengeDetected: true
+      };
+    }
 
     const hasOgTags = html.includes('og:');
     const hasTitleTag = html.includes('og:title');
@@ -160,10 +236,18 @@ async function checkMarkdownVersions(domain: string): Promise<{ availablePages: 
   return { availablePages };
 }
 
-async function checkFAQSchema(domain: string): Promise<{ hasFAQSchema: boolean; faqCount: number }> {
+async function checkFAQSchema(domain: string): Promise<{ hasFAQSchema: boolean; faqCount: number; challengeDetected?: boolean }> {
   try {
-    const response = await fetch(`https://${domain}/`, { redirect: 'follow' });
+    const response = await fetch(`https://${domain}/`, { 
+      redirect: 'follow',
+      headers: { 'User-Agent': SEARCH_ENGINE_USER_AGENT }
+    });
     const html = await response.text();
+
+    // Detect challenge page
+    if (isCloudflareChallengePage(html, response.headers)) {
+      return { hasFAQSchema: false, faqCount: 0, challengeDetected: true };
+    }
 
     const hasFAQSchema = html.includes('"@type":"FAQPage"') || html.includes('"@type": "FAQPage"');
     
@@ -211,6 +295,28 @@ export async function checkGEO(domain: string): Promise<CheckResult> {
       checkMarkdownVersions(domain),
       checkFAQSchema(domain)
     ]);
+
+    // Detect if we got a Cloudflare challenge page
+    const challengeDetected = 
+      llmsTxt.challengeDetected || 
+      metaTags.challengeDetected || 
+      structuredData.challengeDetected || 
+      ssr.challengeDetected || 
+      openGraph.challengeDetected ||
+      faqSchema.challengeDetected;
+
+    if (challengeDetected) {
+      return {
+        id: "geo",
+        label: "AI Discoverability / GEO",
+        status: "info",
+        data: {
+          error: "Bot protection detected",
+          message: "Site is protected by Cloudflare or similar bot protection. Scanner was served a challenge page instead of real content. This prevents accurate GEO analysis. Note: Search engines (Google, Bing) are typically allowed through, so SEO may not be affected."
+        },
+        summary: "Bot protection detected - could not analyze site (search engines typically allowed)."
+      };
+    }
 
     const issues: string[] = [];
     const opportunities: string[] = [];

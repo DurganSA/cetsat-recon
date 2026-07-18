@@ -1,12 +1,36 @@
 import { CheckResult } from "../types";
 
+// Googlebot user-agent to bypass most bot protection
+const SEARCH_ENGINE_USER_AGENT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+
+// Detect Cloudflare challenge page from headers
+function isChallengePageHeaders(headers: Headers): boolean {
+  const csp = headers.get('content-security-policy') || '';
+  return csp.includes('challenges.cloudflare.com');
+}
+
 export async function checkHeaders(domain: string): Promise<CheckResult> {
   try {
     const url = `https://${domain}`;
     const response = await fetch(url, {
       method: "HEAD",
-      redirect: "follow"
+      redirect: "follow",
+      headers: { "User-Agent": SEARCH_ENGINE_USER_AGENT }
     });
+
+    // Detect if we got a Cloudflare challenge page
+    if (isChallengePageHeaders(response.headers)) {
+      return {
+        id: "headers",
+        label: "Website security headers",
+        status: "info",
+        data: {
+          error: "Bot protection detected",
+          message: "Site is protected by Cloudflare or similar bot protection. Scanner was served challenge page headers instead of real security headers. Note: Search engines (Google, Bing) are typically allowed through, so SEO may not be affected."
+        },
+        summary: "Bot protection detected - could not analyze headers (search engines typically allowed)."
+      };
+    }
 
     const headers = Object.fromEntries(response.headers.entries());
 
