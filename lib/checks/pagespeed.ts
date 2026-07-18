@@ -1,24 +1,36 @@
 import { CheckResult } from "../types";
 
+async function fetchPageSpeed(domain: string, strategy: "mobile" | "desktop", apiKey: string) {
+  const url = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https://${domain}&category=performance&category=seo&category=accessibility&strategy=${strategy}${apiKey ? `&key=${apiKey}` : ""}`;
+  
+  const response = await fetch(url);
+  
+  if (!response.ok) {
+    throw new Error(`PageSpeed API query failed for ${strategy}`);
+  }
+  
+  const data = await response.json();
+  
+  return {
+    performanceScore: Math.round((data.lighthouseResult?.categories?.performance?.score || 0) * 100),
+    seoScore: Math.round((data.lighthouseResult?.categories?.seo?.score || 0) * 100),
+    accessibilityScore: Math.round((data.lighthouseResult?.categories?.accessibility?.score || 0) * 100),
+    audits: data.lighthouseResult?.audits || {}
+  };
+}
+
 export async function checkPageSpeed(domain: string): Promise<CheckResult> {
   try {
     const apiKey = process.env.PAGESPEED_API_KEY || "";
-    const url = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https://${domain}&category=performance&category=seo&category=accessibility&strategy=mobile${apiKey ? `&key=${apiKey}` : ""}`;
+    
+    // Fetch both mobile and desktop in parallel
+    const [mobileData, desktopData] = await Promise.all([
+      fetchPageSpeed(domain, "mobile", apiKey),
+      fetchPageSpeed(domain, "desktop", apiKey)
+    ]);
 
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error("PageSpeed API query failed");
-    }
-
-    const data = await response.json();
-
-    const performanceScore = Math.round((data.lighthouseResult?.categories?.performance?.score || 0) * 100);
-    const seoScore = Math.round((data.lighthouseResult?.categories?.seo?.score || 0) * 100);
-    const accessibilityScore = Math.round((data.lighthouseResult?.categories?.accessibility?.score || 0) * 100);
-
-    const audits = data.lighthouseResult?.audits || {};
-    const opportunities = Object.entries(audits)
+    // Extract opportunities from mobile audit (typically has more detail)
+    const opportunities = Object.entries(mobileData.audits)
       .filter(([_, audit]: [string, any]) => audit.details?.type === "opportunity" && audit.numericValue > 0)
       .map(([key, audit]: [string, any]) => ({
         id: key,
@@ -31,31 +43,41 @@ export async function checkPageSpeed(domain: string): Promise<CheckResult> {
     let status: "good" | "review" | "action" = "good";
     let capability: string | undefined;
 
-    if (performanceScore < 50 || seoScore < 50) {
+    const avgPerformance = Math.round((mobileData.performanceScore + desktopData.performanceScore) / 2);
+    const avgSeo = Math.round((mobileData.seoScore + desktopData.seoScore) / 2);
+
+    if (avgPerformance < 50 || avgSeo < 50) {
       status = "action";
       capability = "software_team";
-    } else if (performanceScore < 70 || seoScore < 70) {
+    } else if (avgPerformance < 70 || avgSeo < 70) {
       status = "review";
       capability = "software_team";
     }
 
     return {
       id: "pagespeed",
-      label: "Mobile performance",
+      label: "Page performance & SEO",
       status,
       data: {
-        performanceScore,
-        seoScore,
-        accessibilityScore,
+        mobile: {
+          performanceScore: mobileData.performanceScore,
+          seoScore: mobileData.seoScore,
+          accessibilityScore: mobileData.accessibilityScore
+        },
+        desktop: {
+          performanceScore: desktopData.performanceScore,
+          seoScore: desktopData.seoScore,
+          accessibilityScore: desktopData.accessibilityScore
+        },
         opportunities
       },
-      summary: `Performance: ${performanceScore}/100, SEO: ${seoScore}/100, Accessibility: ${accessibilityScore}/100.`,
+      summary: `Mobile: ${mobileData.performanceScore}/100 perf, ${mobileData.seoScore}/100 SEO. Desktop: ${desktopData.performanceScore}/100 perf, ${desktopData.seoScore}/100 SEO.`,
       capability
     };
   } catch (error) {
     return {
       id: "pagespeed",
-      label: "Mobile performance",
+      label: "Page performance & SEO",
       status: "info",
       data: { error: error instanceof Error ? error.message : String(error) },
       summary: "Could not check page speed."

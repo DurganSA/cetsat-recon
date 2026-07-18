@@ -28,9 +28,32 @@ export async function checkCompaniesHouse(
         }
       });
 
-      if (searchResponse.ok) {
-        const searchData = await searchResponse.json();
-        companyNumber = searchData.items?.[0]?.company_number;
+      if (!searchResponse.ok) {
+        const errorText = await searchResponse.text();
+        console.error("Companies House search failed:", searchResponse.status, errorText);
+        return {
+          id: "companies_house",
+          label: "Companies House",
+          status: "info",
+          data: { error: `Search failed with status ${searchResponse.status}`, searchQuery: companyName },
+          summary: `Companies House search failed. Status: ${searchResponse.status}`
+        };
+      }
+
+      const searchData = await searchResponse.json();
+      console.log("Companies House search results:", searchData.items?.length || 0, "results for", companyName);
+      
+      if (searchData.items && searchData.items.length > 0) {
+        companyNumber = searchData.items[0].company_number;
+        console.log("Selected company:", searchData.items[0].title, "Number:", companyNumber);
+      } else {
+        return {
+          id: "companies_house",
+          label: "Companies House",
+          status: "info",
+          data: { searchQuery: companyName, resultsCount: 0 },
+          summary: `No Companies House match found for "${companyName}". Try using the company number instead.`
+        };
       }
     }
 
@@ -40,7 +63,7 @@ export async function checkCompaniesHouse(
         label: "Companies House",
         status: "info",
         data: {},
-        summary: "No Companies House match found."
+        summary: "No company name or number provided."
       };
     }
 
