@@ -13,6 +13,20 @@ export async function checkEmail(domain: string): Promise<CheckResult> {
     const hasSPF = !!spfRecord;
     const hasDMARC = !!dmarcRecord;
     const dmarcPolicy = dmarcRecord ? extractDMARCPolicy(dmarcRecord) : null;
+    
+    // Parse DMARC nuances
+    let dmarcDetails = null;
+    if (dmarcRecord) {
+      const ruaMatch = dmarcRecord.match(/rua=([^;]+)/);
+      const rufMatch = dmarcRecord.match(/ruf=([^;]+)/);
+      dmarcDetails = {
+        policy: dmarcPolicy,
+        hasRua: !!ruaMatch,
+        hasRuf: !!rufMatch,
+        ruaTarget: ruaMatch ? ruaMatch[1].trim() : null,
+        rufTarget: rufMatch ? rufMatch[1].trim() : null
+      };
+    }
 
     let status: "good" | "review" | "action" = "good";
     let capability: string | undefined;
@@ -25,14 +39,27 @@ export async function checkEmail(domain: string): Promise<CheckResult> {
       capability = "email_security";
     }
 
-    const mxProvider = mxRecords[0]?.exchange.toLowerCase() || "";
+    // Normalize MX exchange (strip trailing dot, lowercase)
+    const mxProvider = mxRecords[0]?.exchange.toLowerCase().replace(/\.$/, "") || "";
+    
+    // Check SPF for additional provider hints
+    const spfLower = spfRecord?.toLowerCase() || "";
+    
     let provider = "Unknown";
-    if (mxProvider.includes("google.com") || mxProvider.includes("googlemail.com")) {
+    if (mxProvider.includes("mimecast") || spfLower.includes("mimecast")) {
+      provider = "Mimecast";
+    } else if (mxProvider.includes("google") || mxProvider.includes("googlemail")) {
       provider = "Google Workspace";
-    } else if (mxProvider.includes("outlook.com") || mxProvider.includes("microsoft.com")) {
+    } else if (mxProvider.includes("outlook") || mxProvider.includes("microsoft") || mxProvider.includes("protection.outlook")) {
       provider = "Microsoft 365";
-    } else if (mxProvider.includes("pphosted.com") || mxProvider.includes("proofpoint.com")) {
+    } else if (mxProvider.includes("pphosted") || mxProvider.includes("proofpoint")) {
       provider = "Proofpoint";
+    } else if (mxProvider.includes("barracuda")) {
+      provider = "Barracuda";
+    } else if (mxProvider.includes("messagelabs") || spfLower.includes("messagelabs")) {
+      provider = "Symantec MessageLabs";
+    } else if (mxProvider.includes("mailprotector")) {
+      provider = "Mailprotector";
     }
 
     return {
@@ -43,6 +70,7 @@ export async function checkEmail(domain: string): Promise<CheckResult> {
         mxRecords,
         spfRecord,
         dmarcRecord,
+        dmarcDetails,
         dkimIndicator,
         provider
       },

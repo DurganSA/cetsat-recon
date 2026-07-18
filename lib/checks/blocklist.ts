@@ -43,15 +43,32 @@ export async function checkBlocklist(domain: string): Promise<CheckResult> {
       };
     }
 
-    const mxIps: string[] = [];
+    // Detect shared provider from MX records
+    const mxHosts = mxRecords.map(mx => mx.exchange.toLowerCase().replace(/\.$/, ""));
+    const isSharedProvider = mxHosts.some(host =>
+      host.includes("mimecast") ||
+      host.includes("protection.outlook") ||
+      host.includes("google.com") ||
+      host.includes("googlemail") ||
+      host.includes("pphosted") ||
+      host.includes("proofpoint") ||
+      host.includes("barracuda") ||
+      host.includes("mailprotector") ||
+      host.includes("messagelabs")
+    );
+
+    const mxIpsRaw: string[] = [];
     for (const mx of mxRecords.slice(0, 3)) {
       try {
         const ips = await resolveA(mx.exchange);
-        mxIps.push(...ips);
+        mxIpsRaw.push(...ips);
       } catch {
         continue;
       }
     }
+
+    // Dedupe IPs
+    const mxIps = Array.from(new Set(mxIpsRaw));
 
     if (mxIps.length === 0) {
       return {
@@ -85,12 +102,29 @@ export async function checkBlocklist(domain: string): Promise<CheckResult> {
       }
     }
 
-    let status: "good" | "review" | "action" = "good";
+    // Count distinct blocklists
+    const distinctBlocklists = Array.from(new Set(listings.map(l => l.list)));
+    const listedIps = Array.from(new Set(listings.map(l => l.ip)));
+
+    let status: "good" | "review" | "action" | "info" = "good";
     let capability: string | undefined;
 
-    if (listings.length > 0) {
+    // If shared provider, downgrade to info with caveat
+    if (listings.length > 0 && isSharedProvider) {
+      status = "info";
+    } else if (listings.length > 0) {
       status = "review";
       capability = "managed_email";
+    }
+
+    let summary: string;
+    if (listings.length > 0) {
+      summary = `${listedIps.length} mail IP(s) listed on ${distinctBlocklists.length} blocklist(s): ${distinctBlocklists.join(", ")}.`;
+      if (isSharedProvider) {
+        summary += " (Note: IPs belong to shared email provider infrastructure)";
+      }
+    } else {
+      summary = `${mxIps.length} mail IP(s) checked, clean across ${blocklists.length} major blocklists.`;
     }
 
     return {
@@ -99,11 +133,12 @@ export async function checkBlocklist(domain: string): Promise<CheckResult> {
       status,
       data: {
         mxIps,
-        listings
+        listings,
+        distinctBlocklists,
+        listedIps,
+        sharedProvider: isSharedProvider
       },
-      summary: listings.length > 0
-        ? `Mail server IP(s) listed on ${listings.length} blocklist(s): ${listings.map(l => l.list).join(", ")}.`
-        : `Mail server IP(s) clean across ${blocklists.length} major blocklists.`,
+      summary,
       capability
     };
   } catch (error) {
