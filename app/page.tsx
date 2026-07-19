@@ -22,6 +22,11 @@ export default function Home() {
   const [comparison, setComparison] = useState<ComparisonResult | null>(null);
   const [error, setError] = useState("");
 
+  const handleLogout = async () => {
+    await fetch("/api/logout", { method: "POST" });
+    window.location.href = "/login";
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsScanning(true);
@@ -208,6 +213,15 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
+        <div className="flex justify-end mb-2">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-sm text-gray-500 hover:text-gray-700 underline"
+          >
+            Log out
+          </button>
+        </div>
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">
             Cetsat Recon
