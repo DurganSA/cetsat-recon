@@ -163,6 +163,43 @@ async function checkMetaTags(domain: string): Promise<{
   }
 }
 
+// Matches type="application/ld+json" or type='application/ld+json' - the plain
+// html.includes() check used for hasJsonLd is quote-agnostic, so this regex needs to be too.
+const JSON_LD_SCRIPT_RE = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+
+// Parses every JSON-LD <script> block on the page and returns the flat list of schema
+// nodes, unwrapping @graph containers and top-level arrays - most WordPress SEO plugins
+// (Yoast, RankMath) emit a single {"@graph": [...]} block with no @type at the root,
+// which a naive top-level json['@type'] read would always miss.
+function extractJsonLdNodes(html: string): Record<string, any>[] {
+  const nodes: Record<string, any>[] = [];
+  const matches = html.matchAll(JSON_LD_SCRIPT_RE);
+
+  for (const match of matches) {
+    try {
+      const json = JSON.parse(match[1].trim());
+      const candidates = Array.isArray(json) ? json : [json];
+      for (const candidate of candidates) {
+        if (candidate && Array.isArray(candidate['@graph'])) {
+          nodes.push(...candidate['@graph']);
+        } else if (candidate) {
+          nodes.push(candidate);
+        }
+      }
+    } catch {
+      // Invalid JSON, skip this block
+    }
+  }
+
+  return nodes;
+}
+
+function getNodeTypes(node: Record<string, any>): string[] {
+  const type = node['@type'];
+  if (!type) return [];
+  return Array.isArray(type) ? type.filter((t): t is string => typeof t === "string") : [type];
+}
+
 async function checkStructuredData(domain: string): Promise<{
   hasJsonLd: boolean;
   schemaTypes: string[];
@@ -178,24 +215,7 @@ async function checkStructuredData(domain: string): Promise<{
     }
 
     const hasJsonLd = html.includes('application/ld+json');
-    
-    // Extract schema types from JSON-LD
-    const schemaTypes: string[] = [];
-    const jsonLdMatches = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
-    
-    if (jsonLdMatches) {
-      jsonLdMatches.forEach(match => {
-        const jsonContent = match.replace(/<script[^>]*>|<\/script>/gi, '').trim();
-        try {
-          const json = JSON.parse(jsonContent);
-          if (json['@type']) {
-            schemaTypes.push(json['@type']);
-          }
-        } catch {
-          // Invalid JSON, skip
-        }
-      });
-    }
+    const schemaTypes = extractJsonLdNodes(html).flatMap(getNodeTypes);
 
     return { hasJsonLd, schemaTypes: Array.from(new Set(schemaTypes)) };
   } catch {
@@ -292,24 +312,9 @@ async function checkFAQSchema(domain: string): Promise<{ hasFAQSchema: boolean; 
       return { hasFAQSchema: false, faqCount: 0, challengeDetected: true };
     }
 
-    const hasFAQSchema = html.includes('"@type":"FAQPage"') || html.includes('"@type": "FAQPage"');
-    
-    let faqCount = 0;
-    const jsonLdMatches = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
-    
-    if (jsonLdMatches) {
-      jsonLdMatches.forEach(match => {
-        const jsonContent = match.replace(/<script[^>]*>|<\/script>/gi, '').trim();
-        try {
-          const json = JSON.parse(jsonContent);
-          if (json['@type'] === 'FAQPage' && json.mainEntity) {
-            faqCount = json.mainEntity.length;
-          }
-        } catch {
-          // Invalid JSON
-        }
-      });
-    }
+    const faqNode = extractJsonLdNodes(html).find(node => getNodeTypes(node).includes('FAQPage'));
+    const hasFAQSchema = faqNode !== undefined;
+    const faqCount = Array.isArray(faqNode?.mainEntity) ? faqNode.mainEntity.length : 0;
 
     return { hasFAQSchema, faqCount };
   } catch {
