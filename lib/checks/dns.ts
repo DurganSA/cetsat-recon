@@ -11,16 +11,22 @@ export async function checkDNS(domain: string): Promise<CheckResult> {
     const hasRecords = aRecords.length > 0;
     const hasNameservers = nsRecords.length > 0;
 
+    // DNSSEC on/off is a real, comparable security signal (comparison.ts already has a
+    // metric extractor for it) - hardcoding "info" always made it invisible to both the
+    // per-check traffic light and competitor scoring regardless of the actual result.
+    const status: "good" | "review" = dnssecStatus ? "good" : "review";
+
     return {
       id: "dns",
       label: "DNS & DNSSEC",
-      status: "info",
+      status,
       data: {
         aRecords,
         nsRecords,
         dnssec: dnssecStatus
       },
-      summary: `DNS resolves via ${nsRecords.length} nameserver(s). DNSSEC: ${dnssecStatus ? "enabled" : "not detected"}.`
+      summary: `DNS resolves via ${nsRecords.length} nameserver(s). DNSSEC: ${dnssecStatus ? "enabled" : "not detected"}.`,
+      capability: dnssecStatus ? undefined : "managed_security"
     };
   } catch (error) {
     return {
@@ -66,7 +72,11 @@ async function checkDNSSEC(domain: string): Promise<boolean> {
       { headers: { Accept: "application/dns-json" } }
     );
     const data = await response.json();
-    return data.Answer && data.Answer.length > 0;
+    // data.Answer is undefined when there's no DNSKEY record (the normal no-DNSSEC
+    // case) - "undefined && x" short-circuits to undefined, not false, which would
+    // silently drop the dnssec field from the JSON output entirely. Coerce to a real
+    // boolean so the field is always present.
+    return Boolean(data.Answer && data.Answer.length > 0);
   } catch {
     return false;
   }
