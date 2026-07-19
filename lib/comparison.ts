@@ -69,13 +69,18 @@ export function buildComparison(scans: DomainScan[]): ComparisonResult {
     let winner: DomainRole | "tie" | null = null;
 
     if (scored.length > 0) {
-      const maxScore = Math.max(...scored.map(d => STATUS_SCORE[d.status]));
-      const winners = scored.filter(d => STATUS_SCORE[d.status] === maxScore);
-      winner = winners.length === 1 ? winners[0].role : "tie";
-
       domains.forEach(d => {
         if (d.status !== "info") scores[d.role] += STATUS_SCORE[d.status];
       });
+    }
+
+    // A "winner" requires at least two sides with real, comparable data - otherwise
+    // a domain gets misleadingly bolded as the winner just because the other side's
+    // check errored out (info), not because it was actually outperformed.
+    if (scored.length >= 2) {
+      const maxScore = Math.max(...scored.map(d => STATUS_SCORE[d.status]));
+      const winners = scored.filter(d => STATUS_SCORE[d.status] === maxScore);
+      winner = winners.length === 1 ? winners[0].role : "tie";
     }
 
     return { checkId, label, domains, winner };
