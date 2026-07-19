@@ -1,13 +1,38 @@
 import { CheckResult } from "../types";
 
-export async function checkSubdomains(domain: string): Promise<CheckResult> {
-  try {
-    const response = await fetch(`https://crt.sh/?q=%.${domain}&output=json`);
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 2000;
+const TIMEOUT_MS = 15000;
 
-    if (!response.ok) {
-      throw new Error("crt.sh query failed");
+// crt.sh is known to be slow/flaky (occasional timeouts, transient 5xx, no response at
+// all) - seen in production on real scans. Retry a couple of times with a short delay
+// before giving up, and always bound each attempt with a timeout so a hung request can
+// never stall the whole scan.
+async function fetchCrtSh(domain: string): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(`https://crt.sh/?q=%.${domain}&output=json`, {
+        signal: AbortSignal.timeout(TIMEOUT_MS)
+      });
+      if (response.ok) return response;
+      lastError = new Error(`crt.sh returned ${response.status}`);
+    } catch (error) {
+      lastError = error;
     }
 
+    if (attempt < RETRY_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("crt.sh query failed");
+}
+
+export async function checkSubdomains(domain: string): Promise<CheckResult> {
+  try {
+    const response = await fetchCrtSh(domain);
     const data = await response.json();
 
     const subdomains = new Set<string>();
