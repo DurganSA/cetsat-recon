@@ -106,7 +106,11 @@ export async function checkFingerprint(domain: string): Promise<CheckResult> {
       status = "review";
       capability = "software_team";
     } else if (fingerprints.length > 0) {
-      status = "info";
+      // Something was detected and nothing is outdated/concerning about it - this is a
+      // clean result, not merely "info". Comparison scoring excludes "info" entirely, so
+      // leaving this as "info" made an up-to-date stack unable to ever win a competitor
+      // comparison against an outdated one.
+      status = "good";
     }
 
     let summary = "";

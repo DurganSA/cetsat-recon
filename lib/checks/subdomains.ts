@@ -112,7 +112,11 @@ export async function checkSubdomains(domain: string): Promise<CheckResult> {
 
     const thirdPartyExposure = likelyThirdParty.length > 0;
 
-    let status: "good" | "review" | "action" | "info" = "info";
+    // "good" (not "info") for a clean successful scan - "info" is reserved for the
+    // catch block below where the lookup itself failed and we have nothing to judge.
+    // Comparison scoring excludes "info" entirely, so a clean result needs "good" to be
+    // able to win a competitor comparison against a domain with sensitive subdomains.
+    let status: "good" | "review" | "action" | "info" = "good";
     let capability: string | undefined;
 
     if (sensitiveSubdomains.length > 0) {

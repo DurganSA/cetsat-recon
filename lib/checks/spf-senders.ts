@@ -169,7 +169,10 @@ export async function checkSpfSenders(domain: string): Promise<CheckResult> {
       m => (m.type === "ip" || m.type === "a") && !m.provider && !m.matchesOwnHost
     );
 
-    const status: "info" | "review" = unrecognized.length > 0 ? "review" : "info";
+    // "good" (not "info") for the clean case - comparison scoring excludes "info"
+    // entirely as neutral, so a genuinely clean result needs "good" to be able to win
+    // a competitor comparison against a domain that has an unrecognized sender.
+    const status: "good" | "review" = unrecognized.length > 0 ? "review" : "good";
 
     const recognizedProviders = Array.from(
       new Set(mechanisms.map(m => m.provider).filter((p): p is string => !!p))
