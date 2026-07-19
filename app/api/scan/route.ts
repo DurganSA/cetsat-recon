@@ -49,37 +49,57 @@ export async function POST(request: NextRequest) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
+        // runCheck() already catches errors from the check itself, but a rejection
+        // anywhere in this per-check wrapper (or a throw from controller.enqueue) would
+        // otherwise reject the whole Promise.all below and silently truncate the stream
+        // (the client just sees a shorter-than-expected response, not an error). Each
+        // check is isolated here so one failure can never take out the others.
+        const runIsolated = async (
+          check: typeof CHECKS[0],
+          checkInput: ScanInput,
+          domain: string,
+          role: DomainRole,
+          onResult?: (result: CheckResult) => void
+        ) => {
+          try {
+            const result = await runCheck(check, checkInput);
+            onResult?.(result);
+            const line = JSON.stringify({ ...result, domain, role }) + "\n";
+            controller.enqueue(encoder.encode(line));
+          } catch (error) {
+            console.error(`[scan] check "${check.id}" failed for ${domain}:`, error);
+          }
+        };
+
         const primaryResults: CheckResult[] = [];
-        const primaryPromises = CHECKS.map(async (check) => {
-          const result = await runCheck(check, input);
-          primaryResults.push(result);
-          const line = JSON.stringify({ ...result, domain: normalizedDomain, role: "primary" as DomainRole }) + "\n";
-          controller.enqueue(encoder.encode(line));
-        });
+        const primaryPromises = CHECKS.map((check) =>
+          runIsolated(check, input, normalizedDomain, "primary", (result) => primaryResults.push(result))
+        );
 
         const competitorEligibleChecks = CHECKS.filter(c => c.competitorEligible);
         const competitorScans: DomainScan[] = competitorDomains.map(c => ({ role: c.role, domain: c.domain, results: [] }));
 
         const competitorPromises = competitorScans.flatMap((scan) => {
           const compInput: ScanInput = { domain: scan.domain };
-          return competitorEligibleChecks.map(async (check) => {
-            const result = await runCheck(check, compInput);
-            scan.results.push(result);
-            const line = JSON.stringify({ ...result, domain: scan.domain, role: scan.role }) + "\n";
-            controller.enqueue(encoder.encode(line));
-          });
+          return competitorEligibleChecks.map((check) =>
+            runIsolated(check, compInput, scan.domain, scan.role, (result) => scan.results.push(result))
+          );
         });
 
-        await Promise.all([...primaryPromises, ...competitorPromises]);
+        await Promise.allSettled([...primaryPromises, ...competitorPromises]);
 
-        if (competitorScans.length > 0) {
-          const allScans: DomainScan[] = [
-            { role: "primary", domain: normalizedDomain, results: primaryResults },
-            ...competitorScans
-          ];
-          const comparison = buildComparison(allScans);
-          const comparisonLine = JSON.stringify({ type: "comparison", comparison }) + "\n";
-          controller.enqueue(encoder.encode(comparisonLine));
+        try {
+          if (competitorScans.length > 0) {
+            const allScans: DomainScan[] = [
+              { role: "primary", domain: normalizedDomain, results: primaryResults },
+              ...competitorScans
+            ];
+            const comparison = buildComparison(allScans);
+            const comparisonLine = JSON.stringify({ type: "comparison", comparison }) + "\n";
+            controller.enqueue(encoder.encode(comparisonLine));
+          }
+        } catch (error) {
+          console.error("[scan] failed to build comparison:", error);
         }
 
         controller.close();

@@ -24,43 +24,63 @@ function getBrowserHeaders(userAgent: string): Record<string, string> {
   };
 }
 
-// Detect Cloudflare challenge page from headers
-function isChallengePageHeaders(headers: Headers): boolean {
+// Detect a Cloudflare (or similar) challenge page from both the CSP header and the
+// response body - checking headers alone missed cases where a WAF/CDN simply errors
+// on HEAD requests for reasons unrelated to bot protection (e.g. a backend routing quirk).
+function isChallengePage(headers: Headers, html: string): boolean {
   const csp = headers.get('content-security-policy') || '';
-  return csp.includes('challenges.cloudflare.com');
+  const htmlLower = html.toLowerCase();
+  return (
+    csp.includes('challenges.cloudflare.com') ||
+    htmlLower.includes('just a moment') ||
+    htmlLower.includes('checking your browser') ||
+    htmlLower.includes('cloudflare ray id')
+  );
 }
 
-// Try multiple strategies
-async function fetchHeadersWithFallback(url: string): Promise<Response | null> {
+type FetchOutcome =
+  | { kind: "ok"; response: Response }
+  | { kind: "challenge" }
+  | { kind: "failed"; error: string };
+
+// Try multiple strategies. Uses GET (not HEAD) because some servers/WAFs reject or
+// mishandle HEAD requests for reasons that have nothing to do with bot protection.
+async function fetchHeadersWithFallback(url: string): Promise<FetchOutcome> {
   const strategies = ['chrome', 'googlebot', 'bingbot'] as const;
-  
+  let lastError = "Unknown error";
+  let challengeSeen = false;
+
   for (const strategy of strategies) {
     try {
       const headers = getBrowserHeaders(USER_AGENTS[strategy]);
       const response = await fetch(url, {
-        method: "HEAD",
+        method: "GET",
         redirect: "follow",
         headers
       });
-      
-      if (!isChallengePageHeaders(response.headers)) {
-        return response;
+      const html = await response.text();
+
+      if (!isChallengePage(response.headers, html)) {
+        return { kind: "ok", response };
       }
-    } catch {
-      // Try next strategy
+      challengeSeen = true;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
   }
-  
-  return null; // All strategies failed
+
+  // Only report bot protection if we actually matched a challenge marker on at least
+  // one attempt - if every strategy instead threw, it's a genuine fetch failure
+  // (e.g. the server rejects the request method) and shouldn't be mislabeled.
+  return challengeSeen ? { kind: "challenge" } : { kind: "failed", error: lastError };
 }
 
 export async function checkHeaders(domain: string): Promise<CheckResult> {
   try {
     const url = `https://${domain}`;
-    const response = await fetchHeadersWithFallback(url);
+    const outcome = await fetchHeadersWithFallback(url);
 
-    // All strategies failed - bot protection too strict
-    if (!response) {
+    if (outcome.kind === "challenge") {
       return {
         id: "headers",
         label: "Website security headers",
@@ -73,6 +93,17 @@ export async function checkHeaders(domain: string): Promise<CheckResult> {
       };
     }
 
+    if (outcome.kind === "failed") {
+      return {
+        id: "headers",
+        label: "Website security headers",
+        status: "info",
+        data: { error: outcome.error },
+        summary: `Could not fetch security headers: ${outcome.error}`
+      };
+    }
+
+    const response = outcome.response;
     const headers = Object.fromEntries(response.headers.entries());
 
     const securityHeaders = {

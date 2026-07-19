@@ -28,13 +28,34 @@ async function resolveMX(domain: string): Promise<string[]> {
 
 export type LookalikeCandidate = { domain: string; hasA: boolean; hasMX: boolean; hasCert: boolean };
 
+const CONCURRENCY_LIMIT = 8;
+
+// Runs async work over items with at most `limit` in flight at once. This check alone
+// fires 50 permutations, and the threat-intel check calls it too - without a cap, running
+// both at once means ~100 simultaneous outbound requests, which has been enough to exhaust
+// sockets/DNS resolver capacity and take down the whole dev process.
+async function mapWithConcurrencyLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await fn(items[currentIndex]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // Resolves which lookalike permutations of a domain are actually registered/live.
 // Shared with the threat-intel check so both reuse the same permutation + resolution logic.
 export async function findRegisteredLookalikes(domain: string): Promise<{ checked: number; found: LookalikeCandidate[] }> {
   const [baseDomain, tld] = splitDomain(domain);
   const permutations = generatePermutations(baseDomain, tld);
 
-  const checks = permutations.map(async (candidate): Promise<LookalikeCandidate | null> => {
+  const results = await mapWithConcurrencyLimit(permutations, CONCURRENCY_LIMIT, async (candidate): Promise<LookalikeCandidate | null> => {
     try {
       const aRecords = await resolveA(candidate);
       const hasA = aRecords.length > 0;
@@ -51,7 +72,7 @@ export async function findRegisteredLookalikes(domain: string): Promise<{ checke
     }
   });
 
-  const found = (await Promise.all(checks)).filter((r): r is LookalikeCandidate => r !== null);
+  const found = results.filter((r): r is LookalikeCandidate => r !== null);
   return { checked: permutations.length, found };
 }
 
@@ -104,6 +125,7 @@ function splitDomain(domain: string): [string, string] {
 function generatePermutations(baseDomain: string, tld: string): string[] {
   const permutations = new Set<string>();
   const maxPermutations = 50;
+  const originalDomain = `${baseDomain}.${tld}`;
 
   const alternativeTlds = ["com", "co.uk", "org", "net", "io"];
   alternativeTlds.forEach(altTld => {
@@ -142,6 +164,10 @@ function generatePermutations(baseDomain: string, tld: string): string[] {
       permutations.add(`${baseDomain.substring(0, i)}-${baseDomain.substring(i)}.${tld}`);
     }
   }
+
+  // A permutation can coincidentally regenerate the original domain (e.g. swapping two
+  // identical adjacent letters, as in "blueloop" -> "oo" -> "oo") - never flag the real domain.
+  permutations.delete(originalDomain);
 
   return Array.from(permutations).slice(0, maxPermutations);
 }
