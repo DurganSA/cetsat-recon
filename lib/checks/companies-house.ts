@@ -1,4 +1,32 @@
 import { CheckResult } from "../types";
+import { SIC_CODE_DESCRIPTIONS } from "../sic-codes";
+
+// Companies House "last_accounts.type" values, mapped to a plain-English size proxy.
+// A legitimate, free way to say "a small firm" or "a mid-sized business" honestly,
+// without guessing headcount from LinkedIn.
+const ACCOUNTS_CATEGORY_LABELS: Record<string, string> = {
+  "micro-entity": "Micro entity",
+  small: "Small company",
+  medium: "Medium-sized company",
+  full: "Full accounts (larger company)",
+  group: "Group accounts (parent of a corporate group)",
+  dormant: "Dormant company",
+  interim: "Interim accounts",
+  initial: "Initial accounts",
+  "unaudited-abridged": "Small company (unaudited abridged accounts)",
+  "audited-abridged": "Small company (audited abridged accounts)",
+  "total-exemption-full": "Small company (full exemption)",
+  "total-exemption-small": "Small company (exemption)",
+  "partial-exemption": "Small company (partial exemption)",
+  "no-accounts-filed": "No accounts filed yet"
+};
+
+function calculateYearsSince(dateString: string | undefined | null): number | null {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24 * 365));
+}
 
 export async function checkCompaniesHouse(
   domain: string,
@@ -89,6 +117,43 @@ export async function checkCompaniesHouse(
 
     const officersData = officersResponse.ok ? await officersResponse.json() : null;
 
+    const officers = officersData?.items?.map((o: any) => ({
+      name: o.name,
+      role: o.officer_role,
+      appointedOn: o.appointed_on,
+      resignedOn: o.resigned_on || null
+    })) || [];
+
+    // "director" (human) is a distinct officer_role from "corporate-director" and
+    // "secretary" in the Companies House schema, so filtering on the exact string
+    // already excludes corporate entities and secretaries without extra logic.
+    const activeDirectors = officers.filter((o: any) => o.role === "director" && !o.resignedOn);
+    const activeDirectorCount = activeDirectors.length;
+    const directorTenures = activeDirectors
+      .map((o: any) => calculateYearsSince(o.appointedOn))
+      .filter((years: number | null): years is number => years !== null);
+    const longestServingDirectorTenureYears = directorTenures.length > 0 ? Math.max(...directorTenures) : null;
+
+    const companyAge = calculateYearsSince(companyData.date_of_creation);
+
+    const accountsType = companyData.accounts?.last_accounts?.type || null;
+    const accountsCategory = accountsType
+      ? (ACCOUNTS_CATEGORY_LABELS[accountsType] || accountsType)
+      : null;
+
+    const sicCodes = companyData.sic_codes || [];
+    const sicCodeDescriptions = sicCodes.map((code: string) => ({
+      code,
+      description: SIC_CODE_DESCRIPTIONS[code] || `SIC ${code}`
+    }));
+
+    const summaryParts = [
+      `${companyData.company_name} (${companyData.company_number}), ${companyData.company_status}, incorporated ${companyData.date_of_creation}`
+    ];
+    if (companyAge !== null) summaryParts.push(`trading ${companyAge} year(s)`);
+    if (accountsCategory) summaryParts.push(accountsCategory);
+    if (activeDirectorCount > 0) summaryParts.push(`${activeDirectorCount} active director(s)`);
+
     return {
       id: "companies_house",
       label: "Companies House",
@@ -98,15 +163,16 @@ export async function checkCompaniesHouse(
         companyName: companyData.company_name,
         status: companyData.company_status,
         type: companyData.type,
-        sicCodes: companyData.sic_codes,
+        sicCodes,
+        sicCodeDescriptions,
         dateOfCreation: companyData.date_of_creation,
-        officers: officersData?.items?.map((o: any) => ({
-          name: o.name,
-          role: o.officer_role,
-          appointedOn: o.appointed_on
-        })) || []
+        companyAge,
+        accountsCategory,
+        activeDirectorCount,
+        longestServingDirectorTenureYears,
+        officers
       },
-      summary: `${companyData.company_name} (${companyData.company_number}), ${companyData.company_status}, incorporated ${companyData.date_of_creation}.`
+      summary: summaryParts.join(", ") + "."
     };
   } catch (error) {
     return {

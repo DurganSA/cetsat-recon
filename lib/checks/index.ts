@@ -17,6 +17,8 @@ import { checkSafeBrowsing } from "./safebrowsing";
 import { checkGEO } from "./geo";
 import { checkThreatIntel } from "./threat-intel";
 import { checkSpfSenders } from "./spf-senders";
+import { checkSiteContent } from "./site-content";
+import { checkReputation } from "./reputation";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -157,6 +159,25 @@ export const CHECKS: Array<{
     fn: async (input) => checkSpfSenders(input.domain),
     priority: 18,
     competitorEligible: true
+  },
+  {
+    id: "site_content",
+    label: "Website content (for enrichment)",
+    fn: async (input) => checkSiteContent(input.domain),
+    priority: 19,
+    // Purely business-context enrichment for the primary prospect's own report - not a
+    // security/quality signal, so there is nothing meaningful to benchmark against a
+    // competitor here.
+    competitorEligible: false
+  },
+  {
+    id: "reputation",
+    label: "Reputation signal",
+    fn: async (input) => checkReputation(input.domain, input.companyName),
+    priority: 20,
+    // Optional, best-effort compliment source for the primary's own report - not a
+    // security/quality signal to benchmark a competitor against.
+    competitorEligible: false
   }
 ];
 

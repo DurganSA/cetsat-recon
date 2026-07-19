@@ -30,20 +30,45 @@ async function fetchCrtSh(domain: string): Promise<Response> {
   throw lastError instanceof Error ? lastError : new Error("crt.sh query failed");
 }
 
+// Fallback CT-log source when crt.sh is unreachable - it's flaky enough in production
+// that subdomains (one of the more revealing findings) shouldn't silently drop out just
+// because one provider is having a bad day. No API key required for reasonable volumes.
+async function fetchCertSpotter(domain: string): Promise<string[]> {
+  const response = await fetch(
+    `https://api.certspotter.com/v1/issuances?domain=${encodeURIComponent(domain)}&include_subdomains=true&expand=dns_names`,
+    { signal: AbortSignal.timeout(TIMEOUT_MS) }
+  );
+  if (!response.ok) throw new Error(`certspotter returned ${response.status}`);
+
+  const data = await response.json();
+  const names: string[] = [];
+  for (const issuance of data) {
+    for (const name of issuance.dns_names || []) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
 export async function checkSubdomains(domain: string): Promise<CheckResult> {
   try {
-    const response = await fetchCrtSh(domain);
-    const data = await response.json();
+    let rawNames: string[];
+
+    try {
+      const response = await fetchCrtSh(domain);
+      const data = await response.json();
+      rawNames = data.flatMap((cert: any) => cert.name_value.split("\n"));
+    } catch (crtShError) {
+      // crt.sh exhausted its retries - try certspotter before giving up entirely.
+      rawNames = await fetchCertSpotter(domain);
+    }
 
     const subdomains = new Set<string>();
-    data.forEach((cert: any) => {
-      const names = cert.name_value.split("\n");
-      names.forEach((name: string) => {
-        const cleaned = name.trim().toLowerCase();
-        if (cleaned.endsWith(`.${domain}`) && cleaned !== domain) {
-          subdomains.add(cleaned);
-        }
-      });
+    rawNames.forEach((name: string) => {
+      const cleaned = name.trim().toLowerCase();
+      if (cleaned.endsWith(`.${domain}`) && cleaned !== domain) {
+        subdomains.add(cleaned);
+      }
     });
 
     const subdomainList = Array.from(subdomains).sort();

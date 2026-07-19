@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { CHECKS, runCheck } from "@/lib/checks";
 import { buildComparison } from "@/lib/comparison";
 import { ScanInput, CheckResult, DomainScan, DomainRole } from "@/lib/types";
+import { normalizeDomain, isValidDomain } from "@/lib/domain";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -121,17 +122,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function normalizeDomain(domain: string): string {
-  let normalized = domain.toLowerCase().trim();
-  
-  normalized = normalized.replace(/^https?:\/\//, "");
-  normalized = normalized.replace(/^www\./, "");
-  normalized = normalized.split("/")[0];
-  
-  return normalized;
-}
 
-function isValidDomain(domain: string): boolean {
-  const domainRegex = /^[a-z0-9.-]+\.[a-z]{2,}$/;
-  return domainRegex.test(domain);
-}

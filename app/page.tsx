@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import { CheckResult, ComparisonResult, DomainRole, StreamedCheckResult } from "@/lib/types";
+import { normalizeDomain } from "@/lib/domain";
 
 type StreamLine = StreamedCheckResult | { type: "comparison"; comparison: ComparisonResult };
 
@@ -30,18 +31,29 @@ export default function Home() {
     setComparison(null);
     setError("");
 
+    // Normalize (strip protocol/www./path) up front and keep state in sync with what
+    // the server actually scans - otherwise the JSON export, report, and filename would
+    // echo back the raw "www.example.com" the user typed while every check result
+    // underneath uses the canonical "example.com".
+    const normalizedDomain = normalizeDomain(domain);
+    const normalizedCompetitor1 = competitor1 ? normalizeDomain(competitor1) : "";
+    const normalizedCompetitor2 = competitor2 ? normalizeDomain(competitor2) : "";
+    setDomain(normalizedDomain);
+    setCompetitor1(normalizedCompetitor1);
+    setCompetitor2(normalizedCompetitor2);
+
     try {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          domain,
+          domain: normalizedDomain,
           companyName,
           companiesHouseNumber,
           recipientName,
           preparedBy,
-          competitor1,
-          competitor2
+          competitor1: normalizedCompetitor1,
+          competitor2: normalizedCompetitor2
         })
       });
 
