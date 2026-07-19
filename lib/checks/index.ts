@@ -16,6 +16,7 @@ import { checkWebHygiene } from "./web-hygiene";
 import { checkSafeBrowsing } from "./safebrowsing";
 import { checkGEO } from "./geo";
 import { checkThreatIntel } from "./threat-intel";
+import { checkSpfSenders } from "./spf-senders";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -149,6 +150,13 @@ export const CHECKS: Array<{
     // Checks lookalike-domain permutations of the primary domain and hits rate-limited
     // free APIs (OTX, PhishTank) - not meaningful or worth the quota for competitor domains.
     competitorEligible: false
+  },
+  {
+    id: "spf_senders",
+    label: "Authorized mail senders (SPF)",
+    fn: async (input) => checkSpfSenders(input.domain),
+    priority: 18,
+    competitorEligible: true
   }
 ];
 

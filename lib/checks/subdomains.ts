@@ -1,8 +1,8 @@
 import { CheckResult } from "../types";
 
-const RETRY_ATTEMPTS = 3;
+const RETRY_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 2000;
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 8000;
 
 // crt.sh is known to be slow/flaky (occasional timeouts, transient 5xx, no response at
 // all) - seen in production on real scans. Retry a couple of times with a short delay

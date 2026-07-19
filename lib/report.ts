@@ -527,6 +527,8 @@ function getQuickFix(finding: CheckResult): string {
       return "Optimize images, leverage browser caching, and minify resources";
     case "threat_intel":
       return "Investigate flagged domain/lookalike activity and request delisting where applicable";
+    case "spf_senders":
+      return "Review unrecognized SPF senders and remove any that are no longer needed";
     default:
       return "Review finding and implement recommended fixes";
   }
