@@ -15,6 +15,7 @@ import { checkBlocklist } from "./blocklist";
 import { checkWebHygiene } from "./web-hygiene";
 import { checkSafeBrowsing } from "./safebrowsing";
 import { checkGEO } from "./geo";
+import { checkThreatIntel } from "./threat-intel";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -138,6 +139,15 @@ export const CHECKS: Array<{
     label: "Companies House",
     fn: async (input) => checkCompaniesHouse(input.domain, input.companyName, input.companiesHouseNumber),
     priority: 16,
+    competitorEligible: false
+  },
+  {
+    id: "threat_intel",
+    label: "Threat intelligence",
+    fn: async (input) => checkThreatIntel(input.domain),
+    priority: 17,
+    // Checks lookalike-domain permutations of the primary domain and hits rate-limited
+    // free APIs (OTX, PhishTank) - not meaningful or worth the quota for competitor domains.
     competitorEligible: false
   }
 ];

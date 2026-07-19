@@ -26,35 +26,46 @@ async function resolveMX(domain: string): Promise<string[]> {
   }
 }
 
+export type LookalikeCandidate = { domain: string; hasA: boolean; hasMX: boolean; hasCert: boolean };
+
+// Resolves which lookalike permutations of a domain are actually registered/live.
+// Shared with the threat-intel check so both reuse the same permutation + resolution logic.
+export async function findRegisteredLookalikes(domain: string): Promise<{ checked: number; found: LookalikeCandidate[] }> {
+  const [baseDomain, tld] = splitDomain(domain);
+  const permutations = generatePermutations(baseDomain, tld);
+
+  const checks = permutations.map(async (candidate): Promise<LookalikeCandidate | null> => {
+    try {
+      const aRecords = await resolveA(candidate);
+      const hasA = aRecords.length > 0;
+      if (!hasA) return null;
+
+      const [mxRecords, hasCert] = await Promise.all([
+        resolveMX(candidate),
+        checkCertificate(candidate)
+      ]);
+
+      return { domain: candidate, hasA, hasMX: mxRecords.length > 0, hasCert };
+    } catch {
+      return null;
+    }
+  });
+
+  const found = (await Promise.all(checks)).filter((r): r is LookalikeCandidate => r !== null);
+  return { checked: permutations.length, found };
+}
+
 export async function checkLookalike(domain: string): Promise<CheckResult> {
   try {
-    const [baseDomain, tld] = splitDomain(domain);
-    const permutations = generatePermutations(baseDomain, tld);
-
-    const checks = permutations.map(async (candidate) => {
-      try {
-        const aRecords = await resolveA(candidate);
-        const hasA = aRecords.length > 0;
-        if (!hasA) return null;
-
-        const [mxRecords, hasCert] = await Promise.all([
-          resolveMX(candidate),
-          checkCertificate(candidate)
-        ]);
-
-        return { domain: candidate, hasA, hasMX: mxRecords.length > 0, hasCert };
-      } catch {
-        return null;
-      }
-    });
-
-    const results = (await Promise.all(checks)).filter((r): r is NonNullable<typeof r> => r !== null);
+    const { checked, found: results } = await findRegisteredLookalikes(domain);
 
     let status: "good" | "review" | "action" = "good";
     let capability: string | undefined;
 
     if (results.length > 0) {
-      status = results.some(r => r.hasMX) ? "action" : "review";
+      // A cert issued to a lookalike is as strong a signal as an MX record - both indicate
+      // someone is actively standing up infrastructure on it, not just squatting the name.
+      status = results.some(r => r.hasMX || r.hasCert) ? "action" : "review";
       capability = "human_firewall";
     }
 
@@ -63,12 +74,12 @@ export async function checkLookalike(domain: string): Promise<CheckResult> {
       label: "Lookalike domains",
       status,
       data: {
-        checked: permutations.length,
+        checked,
         found: results
       },
       summary: results.length > 0
         ? `Found ${results.length} registered lookalike domain(s) that could be used for impersonation.`
-        : `No lookalike domains detected (checked ${permutations.length} permutations).`,
+        : `No lookalike domains detected (checked ${checked} permutations).`,
       capability
     };
   } catch (error) {

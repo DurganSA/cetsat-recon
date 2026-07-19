@@ -525,6 +525,8 @@ function getQuickFix(finding: CheckResult): string {
       return "Enable DNSSEC for domain authentication";
     case "pagespeed":
       return "Optimize images, leverage browser caching, and minify resources";
+    case "threat_intel":
+      return "Investigate flagged domain/lookalike activity and request delisting where applicable";
     default:
       return "Review finding and implement recommended fixes";
   }
