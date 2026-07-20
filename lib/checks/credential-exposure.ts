@@ -3,8 +3,12 @@ import { CheckResult, CheckStatus } from "../types";
 // Dark web / compromised credentials, merged from two sources:
 // - Hudson Rock (Cavalier): infostealer-sourced - a machine belonging to someone at
 //   this domain is/was infected with credential-stealing malware. Serious and current.
-// - IntelligenceX: historical breach/paste appearances of addresses on this domain.
-//   Lower urgency - matters mainly where staff reuse passwords.
+// - IntelligenceX: historical breach/paste/darknet records mentioning this domain.
+//   Lower urgency - matters mainly where staff reuse passwords. Uses the Selector
+//   Search endpoint (/intelligent/search), which is available on the Free tier -
+//   Phonebook Lookups (a cleaner deduplicated-address signal) require at least an
+//   Academia or paid IntelX plan, so this deliberately reports a record-match count
+//   rather than a precise leaked-address count.
 //
 // Passive only: we read indexes of already-leaked data, never test a credential
 // against the target's systems.
@@ -30,7 +34,7 @@ export interface HudsonRockSourceResult {
 
 export interface IntelligenceXSourceResult {
   state: CredentialSourceState;
-  leakedAddressCount?: number;
+  matchingRecordCount?: number;
   cached?: boolean;
   note: string;
 }
@@ -152,13 +156,29 @@ async function queryHudsonRock(domain: string): Promise<HudsonRockSourceResult> 
   }
 }
 
-// Two-step async flow per IntelligenceX's Search API: POST /phonebook/search returns a
-// search id, then GET /phonebook/search/result is polled until status is 0 (done with
-// results) or 1 (no more results). Field names for the free phonebook endpoint
-// (selectorvalue/selectortypeh) are the best-documented public shape (official SDK +
-// community OSINT tooling) - there is no live account available to verify against
-// during this build, so this should be spot-checked against a real response once
-// INTELX_API_KEY is configured, and adjusted if the live shape differs.
+// IntelX's date params use "YYYY-mm-dd HH:ii:ss" (not RFC3339).
+function formatIntelXDate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ` +
+    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
+  );
+}
+
+// Two-step async flow per IntelX's Search API: POST /intelligent/search returns a
+// search id, then GET /intelligent/search/result is polled until status is 0 (success
+// with results) or 1 (no more results). This uses /intelligent/search rather than
+// /phonebook/search deliberately - Phonebook Lookups (a cleaner deduplicated
+// leaked-address signal) are unavailable on IntelX's Free tier per their pricing page
+// (https://intelx.io/product), while Selector Search / /intelligent/search is
+// available (fair-use). The tradeoff: this returns matching leak/paste/darknet
+// records, not a clean list of addresses, so the count reported is "records mentioning
+// this domain" rather than "distinct leaked addresses" - a real, disclosed reduction
+// in precision to keep this source usable on a Free-tier key.
+//
+// Auth: /intelligent/search uses the X-Key header; /intelligent/search/result's
+// documented scheme is a "k" query parameter instead - both are sent on every request
+// for robustness in case either endpoint accepts the other scheme too.
 async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceResult> {
   const apiKey = process.env.INTELX_API_KEY;
   if (!apiKey) {
@@ -174,21 +194,21 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
   const headers: Record<string, string> = { "X-Key": apiKey };
 
   try {
-    // Per IntelX's current OpenAPI spec, /phonebook/search takes all its parameters
-    // as a query string despite being a POST - term/target/maxresults/timeout/media
-    // are query params, not a JSON body (a JSON body here is for the differently
-    // shaped /intelligent/search endpoint, which is not what this check uses).
-    // target=0 ("All") keeps this broad; results are still filtered to this exact
-    // @domain match after fetching.
+    const now = new Date();
     const searchParams = new URLSearchParams({
       term: domain,
-      target: "0",
-      maxresults: "100",
-      timeout: "10",
-      media: "0"
+      maxresults: "50",
+      timeout: "20",
+      // Broad historical range - IntelX's archive goes back years and newly indexed
+      // items are often backdated, so a narrow recent window would miss real hits.
+      datefrom: "2000-01-01 00:00:00",
+      dateto: formatIntelXDate(now),
+      sort: "4", // newest first
+      media: "0",
+      lookuplevel: "0"
     });
 
-    const searchResponse = await fetch(`${apiRoot}/phonebook/search?${searchParams.toString()}`, {
+    const searchResponse = await fetch(`${apiRoot}/intelligent/search?${searchParams.toString()}`, {
       method: "POST",
       headers,
       signal: AbortSignal.timeout(INTELX_TIMEOUT_MS)
@@ -217,13 +237,12 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
       return { state: "error", note: "IntelligenceX search did not return a search id." };
     }
 
-    const selectors: any[] = [];
+    const records: any[] = [];
     for (let attempt = 0; attempt < INTELX_MAX_POLLS; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, INTELX_POLL_INTERVAL_MS));
 
-      // /phonebook/search/result's limit query param is named "l", not "limit".
       const resultResponse = await fetch(
-        `${apiRoot}/phonebook/search/result?id=${encodeURIComponent(searchId)}&l=100`,
+        `${apiRoot}/intelligent/search/result?id=${encodeURIComponent(searchId)}&limit=100&media=0&k=${encodeURIComponent(apiKey)}`,
         { headers, signal: AbortSignal.timeout(INTELX_TIMEOUT_MS) }
       );
 
@@ -235,34 +254,23 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
       }
 
       const resultBody = await resultResponse.json();
-      const pageSelectors: any[] = Array.isArray(resultBody?.selectors) ? resultBody.selectors : [];
-      selectors.push(...pageSelectors);
+      const pageRecords: any[] = Array.isArray(resultBody?.records) ? resultBody.records : [];
+      records.push(...pageRecords);
 
-      // status: 0 = success with results, 1 = no more results, 3 = not ready yet
-      // (keep polling), anything else = stop rather than loop indefinitely.
+      // status: 0 = success with results (continue polling, more may exist), 1 = no
+      // more results, 3 = not ready yet (keep polling), anything else (2 = search id
+      // not found, 4 = error) = stop rather than loop indefinitely.
       if (resultBody?.status === 0 || resultBody?.status === 1) break;
       if (resultBody?.status !== 3) break;
     }
 
-    // Require an actual @domain match rather than trusting the selector-type label
-    // alone (field name/shape unverified against a live account) - a mislabeled or
-    // off-domain selector must never inflate this domain's count.
-    const addresses = new Set<string>();
-    for (const selector of selectors) {
-      const value = typeof selector?.selectorvalue === "string" ? selector.selectorvalue : undefined;
-      if (!value || !value.includes("@")) continue;
-      if (value.toLowerCase().endsWith(`@${domain.toLowerCase()}`)) {
-        addresses.add(value.toLowerCase());
-      }
-    }
-
     return {
       state: "ok",
-      leakedAddressCount: addresses.size,
+      matchingRecordCount: records.length,
       note:
-        addresses.size === 0
-          ? "No addresses on this domain found in indexed leak/paste sources."
-          : "Leak/paste appearance - lower urgency than an active infostealer hit; matters mainly where staff reuse passwords."
+        records.length === 0
+          ? "No leak/paste/darknet records mentioning this domain found."
+          : "Leak/paste/darknet record mention - lower urgency than an active infostealer hit; matters mainly where staff reuse passwords. Reflects matching records, not a deduplicated address count."
     };
   } catch (error) {
     return { state: "error", note: error instanceof Error ? error.message : String(error) };
@@ -298,10 +306,10 @@ function describeIntelligenceX(result: IntelligenceXSourceResult): string {
   const cachedSuffix = result.cached ? " (cached)" : "";
   switch (result.state) {
     case "ok": {
-      const count = result.leakedAddressCount ?? 0;
+      const count = result.matchingRecordCount ?? 0;
       return count === 0
-        ? `IntelligenceX: nothing found in breach/paste sources.${cachedSuffix}`
-        : `IntelligenceX: ${count} address${count === 1 ? "" : "es"} found in breach/paste sources.${cachedSuffix}`;
+        ? `IntelligenceX: nothing found in leak/paste/darknet sources.${cachedSuffix}`
+        : `IntelligenceX: ${count} record${count === 1 ? "" : "s"} mentioning this domain in leak/paste/darknet sources.${cachedSuffix}`;
     }
     case "limit_reached":
       return "IntelligenceX: daily credit reached - not checked today, retry tomorrow.";
@@ -320,7 +328,7 @@ function determineStatus(hudsonRock: HudsonRockSourceResult, intelligenceX: Inte
   const hasOtherHudsonRockHit =
     hudsonRock.state === "ok" &&
     ((hudsonRock.compromisedUsers ?? 0) > 0 || (hudsonRock.compromisedThirdParty ?? 0) > 0);
-  const hasLeakHit = intelligenceX.state === "ok" && (intelligenceX.leakedAddressCount ?? 0) > 0;
+  const hasLeakHit = intelligenceX.state === "ok" && (intelligenceX.matchingRecordCount ?? 0) > 0;
   if (hasOtherHudsonRockHit || hasLeakHit) return "review";
 
   // Both sources genuinely queried and both came back empty - the only case that
