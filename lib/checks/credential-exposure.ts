@@ -228,7 +228,11 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
       return { state: "error", note: "IntelligenceX rejected the configured API key." };
     }
     if (!searchResponse.ok) {
-      return { state: "error", note: `IntelligenceX search failed (${searchResponse.status}).` };
+      // IntelX's own error text is safe to surface (it's about the request shape, not
+      // any leaked data) and is far more useful for debugging than the status alone.
+      const errorText = await searchResponse.text().catch(() => "");
+      const detail = errorText ? ` ${errorText.slice(0, 200)}` : "";
+      return { state: "error", note: `IntelligenceX search failed (${searchResponse.status}).${detail}` };
     }
 
     const searchBody = await searchResponse.json();
@@ -250,7 +254,9 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
         return { state: "limit_reached", note: "Daily search credit reached - not checked today, retry tomorrow." };
       }
       if (!resultResponse.ok) {
-        return { state: "error", note: `IntelligenceX result fetch failed (${resultResponse.status}).` };
+        const errorText = await resultResponse.text().catch(() => "");
+        const detail = errorText ? ` ${errorText.slice(0, 200)}` : "";
+        return { state: "error", note: `IntelligenceX result fetch failed (${resultResponse.status}).${detail}` };
       }
 
       const resultBody = await resultResponse.json();
