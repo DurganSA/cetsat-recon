@@ -1,34 +1,58 @@
 import { CheckResult, CheckStatus } from "../types";
 
-// Dark web / compromised credentials via Hudson Rock (Cavalier): infostealer-sourced -
-// a machine belonging to someone at this domain is/was infected with
-// credential-stealing malware. Serious and current.
+// Dark web / compromised credentials via Hudson Rock's Cavalier OSINT tool
+// (cavalier.hudsonrock.com) - infostealer-sourced: a machine belonging to someone at
+// this domain is/was infected with credential-stealing malware. Serious and current,
+// captured within days of the compromise (unlike old breach-dump aggregators).
+//
+// This is Hudson Rock's free, keyless public OSINT endpoint - confirmed working live
+// (verified 2026-07-20) with no API key required. It's a different product from their
+// paid B2B API (api.hudsonrock.com), which does require a key; that path was tried
+// first and dropped when it turned out to need a key we didn't have, before this
+// keyless endpoint was found to already cover the same data more richly.
 //
 // An IntelligenceX (leak/paste/darknet) source was previously integrated here too, but
 // was dropped: IntelX's /intelligent/search endpoint returned an unresolvable 400/401
-// for every request-shape variation tried (query params, JSON body matching their
-// official SDK exactly, every combination of the "buckets" field, across two separate
-// accounts), and IntelX offers no support channel for free/trial users to diagnose it.
-// See git history (lib/checks/credential-exposure.ts pre-removal) if revisiting this.
+// for every request-shape variation tried across two separate accounts, and IntelX
+// offers no support channel for free/trial users to diagnose it further. See git
+// history (lib/checks/credential-exposure.ts pre-removal) if revisiting this.
 //
 // Passive only: we read indexes of already-leaked data, never test a credential
 // against the target's systems.
 //
-// HARD RULE: report counts, categories and context only. Never capture, store,
+// HARD RULE: report counts, categories, dates and context only. Never capture, store,
 // display, or pass through actual passwords, password hashes, or the specific email
-// addresses / named individuals involved. Any per-record identifier from an API
-// response is used only transiently in-memory to de-duplicate a count, then discarded -
-// it never appears in the returned data, logs, or report.
+// addresses / named individuals / URLs involved. The raw API response includes
+// per-record URL lists (employees_urls, clients_urls, all_urls, stats.*_urls) that can
+// contain literal password-reset links with live tokens - those fields are read only
+// to compute aggregate counts below and are never stored on the returned result.
 
-export type CredentialSourceState = "ok" | "limit_reached" | "no_key" | "error";
+export type CredentialSourceState = "ok" | "limit_reached" | "error";
+
+export interface StealerFamilyCount {
+  name: string;
+  count: number;
+}
+
+export interface PasswordStrengthBreakdown {
+  tooWeakPct: number;
+  weakPct: number;
+  mediumPct: number;
+  strongPct: number;
+}
 
 export interface HudsonRockSourceResult {
   state: CredentialSourceState;
   compromisedEmployees?: number;
   compromisedUsers?: number;
   compromisedThirdParty?: number;
-  stealerCount?: number;
-  truncated?: boolean;
+  // ISO timestamps of the most recent known compromise - the primary urgency signal:
+  // a hit from the last few weeks is a live incident, one from years ago is historical.
+  lastEmployeeCompromised?: string;
+  lastUserCompromised?: string;
+  topStealerFamilies?: StealerFamilyCount[];
+  employeePasswordStrength?: PasswordStrengthBreakdown;
+  antivirusMissingPct?: number;
   cached?: boolean;
   note: string;
 }
@@ -37,8 +61,8 @@ const HUDSONROCK_TIMEOUT_MS = 25000;
 
 // Best-effort, in-memory per-instance cache - there's no database in this project.
 // Salespeople re-running the same domain while drafting a letter would otherwise burn
-// through the free daily credit on every re-scan. Only successful (state "ok")
-// responses are cached; a limit_reached/no_key/error result is never cached as if it
+// through the keyless endpoint's rate limit on every re-scan. Only successful (state
+// "ok") responses are cached; a limit_reached/error result is never cached as if it
 // were data, so a limited source gets a genuine retry on the next scan. Like the login
 // rate limiter, this resets on cold start and isn't shared across concurrent/regional
 // instances - it helps the common case (re-running the same domain within a session on
@@ -71,79 +95,94 @@ function setCachedIfOk<T extends { state: CredentialSourceState }>(
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
-// The live docs show an `api-key` header on every example request, including the most
-// basic single-domain search - this looks to have become required in practice, not the
-// keyless "Cavalier free" behaviour this check was originally scoped around. Built so
-// the key is used when present, but the call is still attempted without one; the
-// response itself (401/403) is the source of truth on whether it's actually required.
+function isRecentIsoDate(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
 async function queryHudsonRock(domain: string): Promise<HudsonRockSourceResult> {
-  const apiKey = process.env.HUDSONROCK_API_KEY;
-
   try {
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      "content-type": "application/json"
-    };
-    if (apiKey) headers["api-key"] = apiKey;
-
-    const response = await fetch("https://api.hudsonrock.com/json/v3/search-by-domain", {
-      method: "POST",
-      headers,
-      // Deliberately omit "types" - filtering by type requires extra permission scopes
-      // a free key may not carry, and we can derive the employee/user/third_party
-      // breakdown ourselves from the returned credentials array.
-      body: JSON.stringify({ domains: [domain] }),
-      signal: AbortSignal.timeout(HUDSONROCK_TIMEOUT_MS)
-    });
+    const response = await fetch(
+      `https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain?domain=${encodeURIComponent(domain)}`,
+      { signal: AbortSignal.timeout(HUDSONROCK_TIMEOUT_MS) }
+    );
 
     if (response.status === 429) {
       return { state: "limit_reached", note: "Rate limit reached - not checked this run, retry later." };
-    }
-    if (response.status === 401 || response.status === 403) {
-      return apiKey
-        ? { state: "error", note: "Hudson Rock rejected the configured API key." }
-        : { state: "no_key", note: "Hudson Rock now requires an API key for this endpoint - not checked." };
     }
     if (!response.ok) {
       return { state: "error", note: `Hudson Rock query failed (${response.status}).` };
     }
 
     const body = await response.json();
-    const stealers: any[] = Array.isArray(body?.data) ? body.data : [];
+    const employees = Number(body?.employees) || 0;
+    const users = Number(body?.users) || 0;
+    const thirdParties = Number(body?.third_parties) || 0;
 
-    const employeeUsernames = new Set<string>();
-    const userUsernames = new Set<string>();
-    const thirdPartyUsernames = new Set<string>();
+    const lastEmployeeCompromised = isRecentIsoDate(body?.last_employee_compromised)
+      ? body.last_employee_compromised
+      : undefined;
+    const lastUserCompromised = isRecentIsoDate(body?.last_user_compromised) ? body.last_user_compromised : undefined;
 
-    for (const stealer of stealers) {
-      const credentials: any[] = Array.isArray(stealer?.credentials) ? stealer.credentials : [];
-      for (const credential of credentials) {
-        const username = typeof credential?.username === "string" ? credential.username : undefined;
-        if (!username) continue;
-        if (credential.type === "employee") employeeUsernames.add(username);
-        else if (credential.type === "user") userUsernames.add(username);
-        else if (credential.type === "third_party") thirdPartyUsernames.add(username);
-      }
+    // Aggregate malware-family counts only (no per-record identifiers) - top 3 by
+    // volume is enough to name the threat without implying false precision.
+    const stealerFamiliesRaw = body?.stealerFamilies;
+    let topStealerFamilies: StealerFamilyCount[] | undefined;
+    if (stealerFamiliesRaw && typeof stealerFamiliesRaw === "object") {
+      topStealerFamilies = Object.entries(stealerFamiliesRaw as Record<string, unknown>)
+        .filter(([key]) => key !== "total")
+        .map(([name, count]) => ({ name, count: Number(count) || 0 }))
+        .filter((f) => f.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3);
+      if (topStealerFamilies.length === 0) topStealerFamilies = undefined;
     }
 
-    const truncated = Boolean(body?.nextCursor);
+    // Aggregate percentage only - never the underlying passwords.
+    const employeePasswords = body?.employeePasswords;
+    let employeePasswordStrength: PasswordStrengthBreakdown | undefined;
+    if (employeePasswords?.has_stats) {
+      employeePasswordStrength = {
+        tooWeakPct: Number(employeePasswords?.too_weak?.perc) || 0,
+        weakPct: Number(employeePasswords?.weak?.perc) || 0,
+        mediumPct: Number(employeePasswords?.medium?.perc) || 0,
+        strongPct: Number(employeePasswords?.strong?.perc) || 0
+      };
+    }
+
+    const antivirusMissingPct =
+      typeof body?.antiviruses?.not_found === "number" ? body.antiviruses.not_found : undefined;
 
     return {
       state: "ok",
-      compromisedEmployees: employeeUsernames.size,
-      compromisedUsers: userUsernames.size,
-      compromisedThirdParty: thirdPartyUsernames.size,
-      stealerCount: stealers.length,
-      truncated,
+      compromisedEmployees: employees,
+      compromisedUsers: users,
+      compromisedThirdParty: thirdParties,
+      lastEmployeeCompromised,
+      lastUserCompromised,
+      topStealerFamilies,
+      employeePasswordStrength,
+      antivirusMissingPct,
       note:
-        stealers.length === 0
+        employees === 0 && users === 0
           ? "No infostealer-compromised machines found for this domain."
-          : "Infostealer-sourced: indicates machine(s) infected with credential-stealing malware." +
-            (truncated ? " More results exist beyond this page - counts are a floor, not a total." : "")
+          : "Infostealer-sourced: indicates machine(s) infected with credential-stealing malware."
     };
   } catch (error) {
     return { state: "error", note: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function daysAgo(iso: string): number {
+  return Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / (24 * 60 * 60 * 1000)));
+}
+
+function mostRecentCompromiseNote(result: HudsonRockSourceResult): string {
+  const dates = [result.lastEmployeeCompromised, result.lastUserCompromised].filter(isRecentIsoDate);
+  if (dates.length === 0) return "";
+  const mostRecent = dates.sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+  const days = daysAgo(mostRecent);
+  const when = days === 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  return ` Most recent compromise: ${when}.`;
 }
 
 function describeHudsonRock(result: HudsonRockSourceResult): string {
@@ -158,13 +197,10 @@ function describeHudsonRock(result: HudsonRockSourceResult): string {
       const parts: string[] = [];
       if (employees > 0) parts.push(`${employees} employee${employees === 1 ? "" : "s"}`);
       if (users > 0) parts.push(`${users} user${users === 1 ? "" : "s"}`);
-      const truncatedSuffix = result.truncated ? "+" : "";
-      return `Hudson Rock: ${parts.join(", ")}${truncatedSuffix} in infostealer logs.${cachedSuffix}`;
+      return `Hudson Rock: ${parts.join(", ")} in infostealer logs.${mostRecentCompromiseNote(result)}${cachedSuffix}`;
     }
     case "limit_reached":
       return "Hudson Rock: daily/rate limit reached - not checked today.";
-    case "no_key":
-      return "Hudson Rock: no API key configured - not checked.";
     case "error":
     default:
       return "Hudson Rock: check failed - not checked.";
@@ -199,16 +235,13 @@ export async function checkCredentialExposure(domain: string): Promise<CheckResu
     const hasInfostealerEmployees = hudsonRock.state === "ok" && (hudsonRock.compromisedEmployees ?? 0) > 0;
     const capability = status === "good" || status === "info" ? undefined : hasInfostealerEmployees ? "managed_security" : "human_firewall";
 
-    const totalsAvailable = !(hudsonRock.state === "ok" && hudsonRock.truncated);
-
     return {
       id: "credential_exposure",
       label: "Dark web & compromised credentials",
       status,
       capability,
       data: {
-        sources: { hudsonRock },
-        totalsAvailable
+        sources: { hudsonRock }
       },
       summary: describeHudsonRock(hudsonRock)
     };
