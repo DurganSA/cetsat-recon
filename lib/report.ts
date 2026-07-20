@@ -311,17 +311,11 @@ export async function generateReport(
         new Paragraph({ text: "" })
       );
 
-      // credential_exposure's summary is two lines (one per source, separated by
-      // "\n") so each source reads on its own line rather than as a single run-on
-      // sentence - docx doesn't break on a literal "\n" within one Paragraph, so
-      // render each line as its own Paragraph instead of the usual single summary one.
-      if (finding.id === "credential_exposure") {
-        finding.summary.split("\n").forEach((line: string) => {
-          sections.push(new Paragraph({ text: line }));
-        });
-      } else {
-        sections.push(new Paragraph({ text: finding.summary }));
-      }
+      // docx doesn't break on a literal "\n" within one Paragraph - render each
+      // line of a multi-line summary as its own Paragraph.
+      finding.summary.split("\n").forEach((line: string) => {
+        sections.push(new Paragraph({ text: line }));
+      });
 
       // Add specific details for certain findings
       if (finding.id === "subdomains" && finding.data.sensitive && finding.data.sensitive.length > 0) {
