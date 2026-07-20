@@ -176,9 +176,11 @@ function formatIntelXDate(date: Date): string {
 // this domain" rather than "distinct leaked addresses" - a real, disclosed reduction
 // in precision to keep this source usable on a Free-tier key.
 //
-// Auth: /intelligent/search uses the X-Key header; /intelligent/search/result's
-// documented scheme is a "k" query parameter instead - both are sent on every request
-// for robustness in case either endpoint accepts the other scheme too.
+// Auth: both calls use the X-Key header, matching the official Python SDK
+// (github.com/IntelligenceX/SDK/Python/intelx/intelxapi.py) rather than the
+// auto-generated openapi.yaml in the same repo, which incorrectly documents these as
+// query parameters - the actively-maintained reference client's request shape is the
+// one that actually works.
 async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceResult> {
   const apiKey = process.env.INTELX_API_KEY;
   if (!apiKey) {
@@ -191,26 +193,30 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
   // must be overridable rather than hardcoded. Check the Developer Tab at
   // https://intelx.io/account?tab=developer for the exact host tied to your key.
   const apiRoot = `https://${process.env.INTELX_API_HOST || "free.intelx.io"}`;
-  const headers: Record<string, string> = { "X-Key": apiKey };
+  const headers: Record<string, string> = { "X-Key": apiKey, "content-type": "application/json" };
 
   try {
     const now = new Date();
-    const searchParams = new URLSearchParams({
-      term: domain,
-      maxresults: "50",
-      timeout: "20",
-      // Broad historical range - IntelX's archive goes back years and newly indexed
-      // items are often backdated, so a narrow recent window would miss real hits.
-      datefrom: "2000-01-01 00:00:00",
-      dateto: formatIntelXDate(now),
-      sort: "4", // newest first
-      media: "0",
-      lookuplevel: "0"
-    });
-
-    const searchResponse = await fetch(`${apiRoot}/intelligent/search?${searchParams.toString()}`, {
+    // Field names/order match the official SDK's INTEL_SEARCH exactly - sent as a
+    // JSON body, not query params, despite the openapi.yaml's (incorrect) docs.
+    const searchResponse = await fetch(`${apiRoot}/intelligent/search`, {
       method: "POST",
       headers,
+      body: JSON.stringify({
+        term: domain,
+        buckets: [],
+        lookuplevel: 0,
+        maxresults: 50,
+        timeout: 20,
+        // Broad historical range - IntelX's archive goes back years and newly
+        // indexed items are often backdated, so a narrow recent window would miss
+        // real hits.
+        datefrom: "2000-01-01 00:00:00",
+        dateto: formatIntelXDate(now),
+        sort: 4, // newest first
+        media: 0,
+        terminate: []
+      }),
       signal: AbortSignal.timeout(INTELX_TIMEOUT_MS)
     });
 
@@ -236,6 +242,12 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
     }
 
     const searchBody = await searchResponse.json();
+    // Per the official SDK, the initial POST can return status:1 (no results) with no
+    // id at all, when there's nothing to poll for - that's a genuine "ok, zero
+    // results", not a missing-id error.
+    if (searchBody?.status === 1) {
+      return { state: "ok", matchingRecordCount: 0, note: "No leak/paste/darknet records mentioning this domain found." };
+    }
     const searchId = searchBody?.id;
     if (!searchId) {
       return { state: "error", note: "IntelligenceX search did not return a search id." };
@@ -245,9 +257,11 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
     for (let attempt = 0; attempt < INTELX_MAX_POLLS; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, INTELX_POLL_INTERVAL_MS));
 
+      // /intelligent/search/result only takes id + limit as query params per the
+      // official SDK - auth is via the X-Key header, same as the initial search.
       const resultResponse = await fetch(
-        `${apiRoot}/intelligent/search/result?id=${encodeURIComponent(searchId)}&limit=100&media=0&k=${encodeURIComponent(apiKey)}`,
-        { headers, signal: AbortSignal.timeout(INTELX_TIMEOUT_MS) }
+        `${apiRoot}/intelligent/search/result?id=${encodeURIComponent(searchId)}&limit=100`,
+        { headers: { "X-Key": apiKey }, signal: AbortSignal.timeout(INTELX_TIMEOUT_MS) }
       );
 
       if (resultResponse.status === 402) {
