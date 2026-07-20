@@ -165,7 +165,12 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
     return { state: "no_key", note: "IntelligenceX API key not configured - not checked." };
   }
 
-  const apiRoot = "https://free.intelx.io";
+  // IntelligenceX assigns each account a specific Search API instance by tier
+  // (public.intelx.io for non-registered, free.intelx.io for free signed-up users,
+  // 2.intelx.io for paid) - a key only works against its assigned instance, so this
+  // must be overridable rather than hardcoded. Check the Developer Tab at
+  // https://intelx.io/account?tab=developer for the exact host tied to your key.
+  const apiRoot = `https://${process.env.INTELX_API_HOST || "free.intelx.io"}`;
   const headers: Record<string, string> = { "x-key": apiKey, "content-type": "application/json" };
 
   try {
