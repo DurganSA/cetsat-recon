@@ -171,24 +171,26 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
   // must be overridable rather than hardcoded. Check the Developer Tab at
   // https://intelx.io/account?tab=developer for the exact host tied to your key.
   const apiRoot = `https://${process.env.INTELX_API_HOST || "free.intelx.io"}`;
-  const headers: Record<string, string> = { "x-key": apiKey, "content-type": "application/json" };
+  const headers: Record<string, string> = { "X-Key": apiKey };
 
   try {
-    const searchResponse = await fetch(`${apiRoot}/phonebook/search`, {
+    // Per IntelX's current OpenAPI spec, /phonebook/search takes all its parameters
+    // as a query string despite being a POST - term/target/maxresults/timeout/media
+    // are query params, not a JSON body (a JSON body here is for the differently
+    // shaped /intelligent/search endpoint, which is not what this check uses).
+    // target=0 ("All") keeps this broad; results are still filtered to this exact
+    // @domain match after fetching.
+    const searchParams = new URLSearchParams({
+      term: domain,
+      target: "0",
+      maxresults: "100",
+      timeout: "10",
+      media: "0"
+    });
+
+    const searchResponse = await fetch(`${apiRoot}/phonebook/search?${searchParams.toString()}`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        term: domain,
-        buckets: [],
-        lookuplevel: 0,
-        maxresults: 100,
-        timeout: 10,
-        datefrom: "",
-        dateto: "",
-        sort: 4,
-        media: 0,
-        terminate: []
-      }),
       signal: AbortSignal.timeout(INTELX_TIMEOUT_MS)
     });
 
@@ -219,8 +221,9 @@ async function queryIntelligenceX(domain: string): Promise<IntelligenceXSourceRe
     for (let attempt = 0; attempt < INTELX_MAX_POLLS; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, INTELX_POLL_INTERVAL_MS));
 
+      // /phonebook/search/result's limit query param is named "l", not "limit".
       const resultResponse = await fetch(
-        `${apiRoot}/phonebook/search/result?id=${encodeURIComponent(searchId)}&limit=100`,
+        `${apiRoot}/phonebook/search/result?id=${encodeURIComponent(searchId)}&l=100`,
         { headers, signal: AbortSignal.timeout(INTELX_TIMEOUT_MS) }
       );
 
