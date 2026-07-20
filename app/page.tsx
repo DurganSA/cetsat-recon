@@ -407,7 +407,7 @@ export default function Home() {
                         <h3 className="font-semibold text-lg mb-1">
                           {result.label}
                         </h3>
-                        <p className="text-sm mb-2">{result.summary}</p>
+                        <p className="text-sm mb-2 whitespace-pre-line">{result.summary}</p>
                         {result.capability && (
                           <span className="inline-block text-xs bg-white bg-opacity-50 px-2 py-1 rounded">
                             Opportunity: {result.capability.replace(/_/g, " ")}

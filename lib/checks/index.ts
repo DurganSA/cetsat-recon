@@ -19,6 +19,7 @@ import { checkThreatIntel } from "./threat-intel";
 import { checkSpfSenders } from "./spf-senders";
 import { checkSiteContent } from "./site-content";
 import { checkReputation } from "./reputation";
+import { checkCredentialExposure } from "./credential-exposure";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -177,6 +178,16 @@ export const CHECKS: Array<{
     priority: 20,
     // Optional, best-effort compliment source for the primary's own report - not a
     // security/quality signal to benchmark a competitor against.
+    competitorEligible: false
+  },
+  {
+    id: "credential_exposure",
+    label: "Dark web & compromised credentials",
+    fn: async (input) => checkCredentialExposure(input.domain),
+    priority: 21,
+    // A conversation-starter finding about the prospect specifically, not a fair
+    // competitor-benchmarking metric - and both sources are free-tier/credit-limited,
+    // so burning quota on competitor domains would come at the primary's expense.
     competitorEligible: false
   }
 ];

@@ -308,11 +308,20 @@ export async function generateReport(
           text: `Finding ${index + 1}: ${finding.label}`,
           heading: HeadingLevel.HEADING_3
         }),
-        new Paragraph({ text: "" }),
-        new Paragraph({
-          text: finding.summary
-        })
+        new Paragraph({ text: "" })
       );
+
+      // credential_exposure's summary is two lines (one per source, separated by
+      // "\n") so each source reads on its own line rather than as a single run-on
+      // sentence - docx doesn't break on a literal "\n" within one Paragraph, so
+      // render each line as its own Paragraph instead of the usual single summary one.
+      if (finding.id === "credential_exposure") {
+        finding.summary.split("\n").forEach((line: string) => {
+          sections.push(new Paragraph({ text: line }));
+        });
+      } else {
+        sections.push(new Paragraph({ text: finding.summary }));
+      }
 
       // Add specific details for certain findings
       if (finding.id === "subdomains" && finding.data.sensitive && finding.data.sensitive.length > 0) {
@@ -529,6 +538,8 @@ function getQuickFix(finding: CheckResult): string {
       return "Investigate flagged domain/lookalike activity and request delisting where applicable";
     case "spf_senders":
       return "Review unrecognized SPF senders and remove any that are no longer needed";
+    case "credential_exposure":
+      return "Force a password reset for affected accounts, enable MFA, and roll out security awareness training";
     default:
       return "Review finding and implement recommended fixes";
   }
