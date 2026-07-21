@@ -20,6 +20,7 @@ import { checkSpfSenders } from "./spf-senders";
 import { checkSiteContent } from "./site-content";
 import { checkReputation } from "./reputation";
 import { checkCredentialExposure } from "./credential-exposure";
+import { checkNewsMentions } from "./news-mentions";
 
 export type CheckFunction = (input: ScanInput) => Promise<CheckResult>;
 
@@ -188,6 +189,15 @@ export const CHECKS: Array<{
     // A conversation-starter finding about the prospect specifically, not a fair
     // competitor-benchmarking metric - and both sources are free-tier/credit-limited,
     // so burning quota on competitor domains would come at the primary's expense.
+    competitorEligible: false
+  },
+  {
+    id: "news_mentions",
+    label: "News & breach mentions",
+    fn: async (input) => checkNewsMentions(input.domain, input.companyName),
+    priority: 22,
+    // Sales-context signal about the primary prospect specifically, and GDELT's strict
+    // rate limit makes it unwise to spend extra queries on competitor domains.
     competitorEligible: false
   }
 ];

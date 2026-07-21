@@ -10,12 +10,36 @@ async function getLatestWordPressVersion(): Promise<string | null> {
   }
 }
 
+// RFC 9116 security.txt - a documented vulnerability-disclosure contact/process.
+// Checked at its standard location first, falling back to the legacy root path some
+// older adopters still use.
+async function findSecurityTxt(domain: string): Promise<{ found: boolean; hasContact: boolean } | null> {
+  const paths = [`/.well-known/security.txt`, `/security.txt`];
+  for (const path of paths) {
+    try {
+      const response = await fetch(`https://${domain}${path}`, { redirect: "follow" });
+      if (response.ok) {
+        const text = await response.text();
+        // A redirect-to-homepage-that-returns-200 (common SPA/CMS catch-all
+        // behaviour) isn't a real security.txt - require the actual RFC 9116
+        // "Contact:" field to confirm this is genuine, not a false positive.
+        const hasContact = /^Contact:/im.test(text);
+        if (hasContact) return { found: true, hasContact: true };
+      }
+    } catch {
+      // try next path
+    }
+  }
+  return { found: false, hasContact: false };
+}
+
 export async function checkFingerprint(domain: string): Promise<CheckResult> {
   try {
     const url = `https://${domain}`;
-    const response = await fetch(url, {
-      redirect: "follow"
-    });
+    const [response, securityTxt] = await Promise.all([
+      fetch(url, { redirect: "follow" }),
+      findSecurityTxt(domain)
+    ]);
 
     const html = await response.text();
     const headers = Object.fromEntries(response.headers.entries());
@@ -131,6 +155,13 @@ export async function checkFingerprint(domain: string): Promise<CheckResult> {
       summary = "No clear technology fingerprints detected.";
     }
 
+    // Informational only - most SMEs don't have a security.txt, so its absence alone
+    // shouldn't drive status/capability the way an outdated CMS version does.
+    const hasSecurityTxt = securityTxt?.found ?? false;
+    summary += hasSecurityTxt
+      ? " security.txt (vulnerability disclosure contact) found."
+      : " No security.txt (vulnerability disclosure contact) found.";
+
     return {
       id: "fingerprint",
       label: "CMS and technology stack",
@@ -140,7 +171,8 @@ export async function checkFingerprint(domain: string): Promise<CheckResult> {
         version,
         latestVersion,
         isOutdated,
-        cmsType
+        cmsType,
+        hasSecurityTxt
       },
       summary,
       capability

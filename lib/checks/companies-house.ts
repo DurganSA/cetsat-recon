@@ -28,6 +28,13 @@ function calculateYearsSince(dateString: string | undefined | null): number | nu
   return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24 * 365));
 }
 
+function isWithinLastYear(dateString: string | undefined | null): boolean {
+  if (!dateString) return false;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() < 1000 * 60 * 60 * 24 * 365;
+}
+
 export async function checkCompaniesHouse(
   domain: string,
   companyName?: string,
@@ -134,7 +141,21 @@ export async function checkCompaniesHouse(
       .filter((years: number | null): years is number => years !== null);
     const longestServingDirectorTenureYears = directorTenures.length > 0 ? Math.max(...directorTenures) : null;
 
+    // Director churn in the last 12 months (either direction) - frequent turnover at
+    // the top can correlate with organisational instability, a relevant context signal
+    // regardless of what's driving it.
+    const recentDirectorChanges = officers.filter(
+      (o: any) => o.role === "director" && (isWithinLastYear(o.appointedOn) || isWithinLastYear(o.resignedOn))
+    ).length;
+
     const companyAge = calculateYearsSince(companyData.date_of_creation);
+
+    // Compliance/financial-health context, straight from the company profile - genuine
+    // free signals of operational maturity and risk, not security findings themselves.
+    const accountsOverdue = Boolean(companyData.accounts?.overdue);
+    const confirmationStatementOverdue = Boolean(companyData.confirmation_statement?.overdue);
+    const hasInsolvencyHistory = Boolean(companyData.has_insolvency_history);
+    const hasCharges = Boolean(companyData.has_charges);
 
     const accountsType = companyData.accounts?.last_accounts?.type || null;
     const accountsCategory = accountsType
@@ -153,11 +174,23 @@ export async function checkCompaniesHouse(
     if (companyAge !== null) summaryParts.push(`trading ${companyAge} year(s)`);
     if (accountsCategory) summaryParts.push(accountsCategory);
     if (activeDirectorCount > 0) summaryParts.push(`${activeDirectorCount} active director(s)`);
+    if (recentDirectorChanges > 0) summaryParts.push(`${recentDirectorChanges} director change(s) in the last year`);
+    if (accountsOverdue) summaryParts.push("accounts overdue");
+    if (confirmationStatementOverdue) summaryParts.push("confirmation statement overdue");
+    if (hasInsolvencyHistory) summaryParts.push("has insolvency history");
+    if (hasCharges) summaryParts.push("has registered charges (secured lending)");
+
+    // This check is business context, not a security finding - "info" throughout would
+    // undersell a genuine compliance/financial-health signal, but "action" would
+    // overstate it (these aren't security defects). "review" flags it as worth reading
+    // without implying a fix is needed; a clean profile stays "info" as before.
+    const status: CheckResult["status"] =
+      accountsOverdue || confirmationStatementOverdue || hasInsolvencyHistory ? "review" : "info";
 
     return {
       id: "companies_house",
       label: "Companies House",
-      status: "info",
+      status,
       data: {
         companyNumber: companyData.company_number,
         companyName: companyData.company_name,
@@ -170,6 +203,11 @@ export async function checkCompaniesHouse(
         accountsCategory,
         activeDirectorCount,
         longestServingDirectorTenureYears,
+        recentDirectorChanges,
+        accountsOverdue,
+        confirmationStatementOverdue,
+        hasInsolvencyHistory,
+        hasCharges,
         officers
       },
       summary: summaryParts.join(", ") + "."
