@@ -1,15 +1,12 @@
-import { CheckResult } from "../types";
+﻿import { CheckResult } from "../types";
 
 export async function checkEmail(domain: string): Promise<CheckResult> {
   try {
-    const [mxRecords, spfRecord, dmarcRecord, dkimIndicator, mtaSts, tlsRpt, bimi] = await Promise.all([
+    const [mxRecords, spfRecord, dmarcRecord, dkimIndicator] = await Promise.all([
       resolveMX(domain).catch(() => []),
       getSPFRecord(domain),
       getDMARCRecord(domain),
-      checkDKIMSetup(domain),
-      getMTASTSRecord(domain),
-      getTLSRPTRecord(domain),
-      getBIMIRecord(domain)
+      checkDKIMSetup(domain)
     ]);
 
     const hasMX = mxRecords.length > 0;
@@ -75,15 +72,9 @@ export async function checkEmail(domain: string): Promise<CheckResult> {
         dmarcRecord,
         dmarcDetails,
         dkimIndicator,
-        provider,
-        mtaSts,
-        tlsRpt,
-        bimi
+        provider
       },
-      // MTA-STS/TLS-RPT/BIMI are maturity extras most SMEs don't have, not core auth -
-      // surfaced for context but deliberately not weighted into status/capability, so a
-      // domain with solid SPF/DKIM/DMARC isn't marked down just for lacking niche extras.
-      summary: `MX: ${provider}. SPF: ${hasSPF ? "✓" : "✗"}. DKIM: ${dkimIndicator ? "✓" : "✗"}. DMARC: ${hasDMARC ? dmarcPolicy || "present" : "✗"}. MTA-STS: ${mtaSts ? "✓" : "✗"}. TLS-RPT: ${tlsRpt ? "✓" : "✗"}. BIMI: ${bimi ? "✓" : "✗"}.`,
+      summary: `MX: ${provider}. SPF: ${hasSPF ? "✓" : "✗"}. DKIM: ${dkimIndicator ? "✓" : "✗"}. DMARC: ${hasDMARC ? dmarcPolicy || "present" : "✗"}.`,
       capability
     };
   } catch (error) {
@@ -163,41 +154,4 @@ async function checkDKIMSetup(domain: string): Promise<boolean> {
 function extractDMARCPolicy(record: string): string | null {
   const match = record.match(/p=([a-z]+)/);
   return match ? match[1] : null;
-}
-
-// MTA-STS enforces TLS for inbound mail delivery, preventing downgrade/interception
-// attacks on the SMTP connection itself - checked via DNS record presence only (the
-// full policy also requires an HTTPS policy file at mta-sts.<domain>, but the DNS
-// record is the intent signal and is enough to report presence/absence honestly).
-async function getMTASTSRecord(domain: string): Promise<string | null> {
-  try {
-    const records = await resolveTXT(`_mta-sts.${domain}`);
-    return records.find((r: string) => r.startsWith("v=STSv1")) || null;
-  } catch {
-    return null;
-  }
-}
-
-// TLS-RPT: reporting endpoint for TLS/MTA-STS failures - lets a domain owner see when
-// inbound mail delivery to them fails to negotiate TLS.
-async function getTLSRPTRecord(domain: string): Promise<string | null> {
-  try {
-    const records = await resolveTXT(`_smtp._tls.${domain}`);
-    return records.find((r: string) => r.startsWith("v=TLSRPTv1")) || null;
-  } catch {
-    return null;
-  }
-}
-
-// BIMI: displays a verified brand logo next to authenticated emails in supporting
-// inboxes - requires a strong DMARC policy to be meaningful, so its presence is also a
-// proxy for "this org has invested past the basics". Checked under the common
-// "default" selector only; other selectors exist but are rare in practice.
-async function getBIMIRecord(domain: string): Promise<string | null> {
-  try {
-    const records = await resolveTXT(`default._bimi.${domain}`);
-    return records.find((r: string) => r.startsWith("v=BIMI1")) || null;
-  } catch {
-    return null;
-  }
 }

@@ -7,8 +7,13 @@ import { CheckResult } from "../types";
 // practice on shared egress IPs); on a shared serverless IP pool this could occasionally
 // be hit even from a single request. Any non-JSON/rate-limited response degrades to
 // "not checked", never a false "clean" result.
-
-const FETCH_TIMEOUT_MS = 10000;
+//
+// Observed in production: when GDELT rejects a request (429 or its plain-text notice),
+// it can take 10+ seconds to respond rather than failing fast, which tripped a 10s
+// timeout and surfaced as a generic "aborted due to timeout" error. 20s gives real
+// headroom for that slow-rejection behaviour while this check still degrades gracefully
+// (to "info") if it's ever exceeded.
+const FETCH_TIMEOUT_MS = 20000;
 
 const BREACH_KEYWORDS =
   '(breach OR ransomware OR "data breach" OR cyberattack OR "cyber attack" OR hacked OR hack OR "security incident")';
