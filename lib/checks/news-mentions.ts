@@ -25,7 +25,7 @@ interface GDELTArticle {
   domain: string;
 }
 
-async function queryGDELT(query: string): Promise<GDELTArticle[] | null> {
+async function queryGDELTOnce(query: string): Promise<GDELTArticle[] | null> {
   const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=5&timespan=2years&sort=datedesc`;
   const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) return null;
@@ -40,6 +40,20 @@ async function queryGDELT(query: string): Promise<GDELTArticle[] | null> {
     // (a genuine zero-results response is a valid `{}` or `{"articles":[]}` JSON body).
     return null;
   }
+}
+
+// GDELT's rate limiting has been observed to be transient and shared-IP-dependent in
+// practice (a request can fail purely because some other tenant on the same serverless
+// egress IP hit the limit moments earlier). A single retry after a short backoff costs
+// nothing against overall scan time - other checks (e.g. SSL Labs) already take far
+// longer - but meaningfully improves the odds of getting through instead of degrading
+// to "not checked" on every single scan.
+async function queryGDELT(query: string): Promise<GDELTArticle[] | null> {
+  const first = await queryGDELTOnce(query).catch(() => null);
+  if (first !== null) return first;
+
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  return queryGDELTOnce(query).catch(() => null);
 }
 
 export async function checkNewsMentions(domain: string, companyName?: string): Promise<CheckResult> {
